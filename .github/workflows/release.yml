@@ -1,0 +1,210 @@
+# Release: the Windows and Linux portable packages (tools/portable.py, each started once on the
+# software renderer), the plugins for both (tools/plugins.py) and the FFmpeg source the LGPL asks
+# for: FFmpeg's source at the commit of the audio-only build Player-Core carries
+# (third_party/ffmpeg), with the scripts that build it (tools/ffmpeg-audio).
+#
+# Automatic: when CI passes on a push to `main` and the version in crates/novaplayer/Cargo.toml
+# has no release yet, this builds everything from that commit and publishes it as release
+# `v<version>` (its tag made on that commit), the latest one. A release is a version bump pushed
+# to `main`; nothing is tagged or uploaded by hand. A CI pass at a released version builds nothing.
+#
+# Started by hand (workflow_dispatch), it builds the packages of `main` as the run's artifacts
+# only, to be downloaded and tried; it publishes nothing.
+#
+# NOVA_READ_TOKEN: as in ci.yml, while NovaUI and Player-Core are private.
+name: release
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+# One at a time, never cancelled: a second run waits and then sees the release the first made.
+concurrency:
+  group: release
+  cancel-in-progress: false
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+jobs:
+  version:
+    # After CI: only a passing run of a push to `main`.
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.v.outputs.sha }}
+      tag: ${{ steps.v.outputs.tag }}
+      build: ${{ steps.v.outputs.build }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha=$(git rev-parse HEAD)
+          version=$(grep -m 1 '^version = ' crates/novaplayer/Cargo.toml | cut -d '"' -f 2)
+          tag="v$version"
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            build=true; publish=false
+          elif gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "$tag is already released: nothing to build"
+            build=false; publish=false
+          else
+            build=true; publish=true
+          fi
+          echo "$sha $tag build=$build publish=$publish"
+          { echo "sha=$sha"; echo "tag=$tag"; echo "build=$build"; echo "publish=$publish"; } >> "$GITHUB_OUTPUT"
+  windows:
+    needs: version
+    if: needs.version.outputs.build == 'true'
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+          persist-credentials: false   # its GITHUB_TOKEN header would stand in for NOVA_READ_TOKEN
+      - name: access to the private dependencies
+        shell: bash
+        run: |
+          TOKEN=$(printf %s "$TOKEN" | tr -d '\r\n\t ')
+          if [ -n "$TOKEN" ]; then
+            git config --global url."https://x-access-token:${TOKEN}@github.com/wuuuming/".insteadOf "https://github.com/wuuuming/"
+            git -C "$RUNNER_TEMP" ls-remote https://github.com/wuuuming/Player-Core.git HEAD > /dev/null \
+              || { echo "::error::NOVA_READ_TOKEN cannot read Player-Core (expired, deleted, or without Contents: read on it)"; exit 1; }
+          fi
+        env:
+          TOKEN: ${{ secrets.NOVA_READ_TOKEN }}
+      - name: toolchain
+        run: rustup toolchain install   # rust-toolchain.toml
+      # The dependencies built once and kept: a release recompiles only NovaPlayer itself (and its
+      # whole-program optimization, which a release build always does).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: package
+        run: python tools/portable.py --sw
+        env:
+          # ASIO's bindings need libclang; the image has LLVM there.
+          LIBCLANG_PATH: C:\Program Files\LLVM\bin
+      - name: plugins
+        run: python tools/plugins.py
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows
+          path: |
+            target/dist-portable/NovaPlayer-Windows-*
+            target/dist-plugins/*.zip
+  linux:
+    needs: version
+    if: needs.version.outputs.build == 'true'
+    # The oldest glibc GitHub's images offer (Ubuntu 22.04: 2.35), so the package runs on as many
+    # systems as it can.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+          persist-credentials: false   # its GITHUB_TOKEN header would stand in for NOVA_READ_TOKEN
+      - name: access to the private dependencies
+        run: |
+          TOKEN=$(printf %s "$TOKEN" | tr -d '\r\n\t ')
+          if [ -n "$TOKEN" ]; then
+            git config --global url."https://x-access-token:${TOKEN}@github.com/wuuuming/".insteadOf "https://github.com/wuuuming/"
+            git -C "$RUNNER_TEMP" ls-remote https://github.com/wuuuming/Player-Core.git HEAD > /dev/null \
+              || { echo "::error::NOVA_READ_TOKEN cannot read Player-Core (expired, deleted, or without Contents: read on it)"; exit 1; }
+          fi
+        env:
+          TOKEN: ${{ secrets.NOVA_READ_TOKEN }}
+      - name: toolchain
+        run: rustup toolchain install   # rust-toolchain.toml
+      # The dependencies built once and kept: a release recompiles only NovaPlayer itself (and its
+      # whole-program optimization, which a release build always does).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release
+      - name: package
+        run: xvfb-run -a python3 tools/portable.py --sw
+      - name: plugins
+        run: python3 tools/plugins.py
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux
+          path: |
+            target/dist-portable/NovaPlayer-Linux-*
+            target/dist-plugins/*.zip
+  source:
+    needs: version
+    if: needs.version.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+          persist-credentials: false
+      - id: pin
+        name: the pinned Player-Core
+        run: echo "rev=$(grep -o 'Player-Core.git", rev = "[0-9a-f]*' crates/novaplayer/Cargo.toml | head -n 1 | grep -o '[0-9a-f]\{40\}')" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          repository: wuuuming/Player-Core
+          ref: ${{ steps.pin.outputs.rev }}
+          token: ${{ secrets.NOVA_READ_TOKEN || github.token }}
+          path: player-core
+          persist-credentials: false
+      - name: FFmpeg's source at the build's commit, with the scripts that build it
+        run: |
+          rev=$(grep -m 1 '^COMMIT=' player-core/tools/ffmpeg-audio/build.sh | cut -d= -f2)
+          dir="FFmpeg-source-$rev"; mkdir -p "$dir" out
+          curl -fsSL --retry 3 -o "$dir/FFmpeg-$rev.tar.gz" "https://github.com/FFmpeg/FFmpeg/archive/$rev.tar.gz"
+          tar -tzf "$dir/FFmpeg-$rev.tar.gz" > /dev/null
+          cp -r player-core/tools/ffmpeg-audio "$dir/build-scripts"
+          cp player-core/crates/player-core/third_party/ffmpeg/LICENSE.txt "$dir/LICENSE.txt"
+          {
+            echo "The FFmpeg in NovaPlayer (Windows) is an audio-only LGPL build of FFmpeg $rev."
+            echo "FFmpeg-$rev.tar.gz is FFmpeg's source at that commit; build-scripts/ holds the scripts"
+            echo "that build it (make.sh runs build.sh in Docker's ubuntu:22.04)."
+          } > "$dir/README.txt"
+          zip -qr -X "out/NovaPlayer-FFmpeg-source-$rev.zip" "$dir"
+          (cd out && sha256sum "NovaPlayer-FFmpeg-source-$rev.zip" > "NovaPlayer-FFmpeg-source-$rev.zip.sha256")
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ffmpeg-source
+          path: out
+  release:
+    if: needs.version.outputs.publish == 'true'
+    needs: [version, windows, linux, source]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: ffmpeg-source
+          path: dist
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+          SHA: ${{ needs.version.outputs.sha }}
+        run: |
+          files=$(find dist -type f | sort)
+          echo "$files"
+          gh release create "$TAG" $files --repo "$GITHUB_REPOSITORY" --target "$SHA" \
+            --title "NovaPlayer ${TAG#v}" --generate-notes --latest

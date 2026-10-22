@@ -1,0 +1,27 @@
+// The built-in lyric style: the first style written against the lyric style contract v0
+// (docs/extensions.md "Lyric styles"). A style draws a group's lines; the player places them
+// (size, wrap, scroll) and writes the contract's values for each visible group every frame it
+// moves:
+//   $light     0..1  how lit the group is: the sung group fades in, the one it leaves fades out
+//   $distance        groups from the sung one (negative: already sung)
+//   $edge      0..1  1 inside the side panel, falling to 0 across the band at its top and bottom
+//   $hover     0|1   the pointer is over the group
+//   $sweep           chars of the first line sung (fractional); -1 without word timing, or
+//                    when the group is not the sung one
+// Ink is rounded to whole 8-bit steps, as the player always did.
+
+// The first line of a group. With word timing, the unsung part stays near the unlit ink and the
+// sung part takes the lit ink; otherwise the whole line takes it.
+component LyricLine(line) {
+  Text #line { text: $line; fg: text-primary; weight: 700; sweep: $sweep; sweep-fg: text-primary;
+    fg-alpha: $sweep >= 0
+      ? round(min(0.36 + 0.2 * $light + 0.25 * $hover, 1) * $edge * 255) / 255
+      : round(min(0.36 + 0.64 * $light + 0.25 * $hover, 1) * $edge * 255) / 255;
+    sweep-alpha: round(min(0.36 + 0.64 * $light + 0.25 * $hover, 1) * $edge * 255) / 255; }
+}
+
+// A reading or translation under it: always whole-line lit, quieter.
+component LyricReading(line) {
+  Text #reading { text: $line; fg: text-primary; weight: 600;
+    fg-alpha: round(min(0.24 + 0.54 * $light + 0.25 * $hover, 0.78) * $edge * 255) / 255; }
+}

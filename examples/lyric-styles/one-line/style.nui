@@ -1,0 +1,22 @@
+// One line (example lyric style package, docs/extensions.md §C). The sung line alone, held at
+// the window's middle: its chars drop in from above one after another as the line starts (a
+// damped spring, no overshoot, and a small tilt that straightens), then warm as they are sung;
+// the line it replaces sinks and fades. Readings and translations rise in under it.
+component LyricLine(line) {
+  Text #line { text: $line; fg: text-primary; weight: 800; scale: 1.2;
+    units: char; timing: $timing; time: $time;
+    translate: 0, -$middle + ($distance < -0.5 ? 28 * (1 - $light) : 0);
+    opacity: $light;
+    u-translate: 0, -40 * (1 - spring($time - unit.start - unit.i * 0.045, 1.5, 1));
+    u-opacity: keys($time - unit.start - unit.i * 0.045, 0, 0, 0.18, 1) * keys(unit.p, -0.2, 0.55, 0, 1);
+    u-rotate: (unit.hash - 0.5) * 24 * (1 - spring($time - unit.start - unit.i * 0.045, 1.5, 1));
+    u-fg: mix(text-primary, #FFC2D8, keys(unit.age, 0, 0, 0.08, 1, 0.9, 0)); }
+}
+component LyricReading(line) {
+  Text #reading { text: $line; fg: text-primary; weight: 600;
+    units: word; timing: $timing; time: $time;
+    translate: 0, -$middle + ($distance < -0.5 ? 28 * (1 - $light) : 0);
+    opacity: 0.8 * $light;
+    u-translate: 0, 16 * (1 - spring($time - unit.start - 0.25 - unit.i * 0.06, 1.4, 1));
+    u-opacity: keys($time - unit.start - 0.25 - unit.i * 0.06, 0, 0, 0.3, 1); }
+}

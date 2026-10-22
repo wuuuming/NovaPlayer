@@ -1,0 +1,63 @@
+[workspace]
+resolver = "2"
+members = ["crates/novaplayer", "crates/plugin-protocol", "crates/plugins/kit", "crates/plugins/ncm", "crates/plugins/qqmusic"]
+
+# NovaUI and Player-Core are git dependencies (crates/novaplayer/Cargo.toml). To build against
+# local checkouts, a `[patch]` in a parent directory's `.cargo/config.toml` points them at the
+# sibling folders (see README, "Local workspace").
+
+# Every crate inherits these (`[lints] workspace = true`). principles.md B4: an `unsafe` block
+# states its contract; a failure is a value, not a panic (unwrap/expect stay in tests, clippy.toml);
+# leftovers of debugging do not reach a commit.
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unwrap_used = "warn"
+expect_used = "warn"
+
+[workspace.dependencies]
+windows = "=0.58.0"
+
+# Player-Core's patched cpal (player-core/vendor/cpal/PATCHED.md: a paused WASAPI stream stops
+# waking 100/s). A [patch] applies only at the workspace root, so it is repeated here; keep the
+# rev the same as player-core's in crates/novaplayer/Cargo.toml.
+[patch.crates-io]
+cpal = { git = "https://github.com/wuuuming/Player-Core.git", rev = "a63e7862a3dd8413f993e2b0fc594b9ead6eb273" }
+
+[profile.release]
+debug = 0
+strip = true
+# Fat LTO: the smallest program at the same speed (thin: 9.56 MiB, fat: 9.22).
+lto = "fat"
+panic = "abort"
+codegen-units = 1
+
+# What runs off the hot paths is built for size: image decoding (once per cover, on a worker),
+# HTTPS, glyph outlines (each rasterised once into the atlas), screen-reader support. The UI,
+# text shaping, layout and the sound stay at full speed.
+[profile.release.package]
+image = { opt-level = "s" }
+image-webp = { opt-level = "s" }
+zune-jpeg = { opt-level = "s" }
+ureq = { opt-level = "s" }
+ureq-proto = { opt-level = "s" }
+rustls = { opt-level = "s" }
+ring = { opt-level = "s" }
+rustls-webpki = { opt-level = "s" }
+ttf-parser = { opt-level = "s" }
+accesskit = { opt-level = "s" }
+accesskit_consumer = { opt-level = "s" }
+accesskit_windows = { opt-level = "s" }
+
+# CI's checks (tools/ci.py): optimized, but built for build time, not for the program: no LTO,
+# code split for parallel builds, little optimization. What a release ships is `release`.
+[profile.ci]
+inherits = "release"
+lto = false
+codegen-units = 16
+opt-level = 1
+incremental = false
+
+[profile.dev.package."*"]
+opt-level = 2

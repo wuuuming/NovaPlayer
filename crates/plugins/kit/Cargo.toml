@@ -1,0 +1,14 @@
+[package]
+name = "novaplayer-plugin-kit"
+version = "0.0.1"
+license = "MIT OR Apache-2.0"
+edition = "2021"
+description = "Shared plumbing for NovaPlayer service plugins: the JSON-lines pipe, shared protocol JSON, HTTP, and helpers"
+
+[dependencies]
+novaplayer-plugin-protocol = { path = "../../plugin-protocol" }
+ureq = "=3.1.4"
+getrandom = "=0.2.16"
+
+[lints]
+workspace = true

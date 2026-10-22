@@ -1,0 +1,41 @@
+{
+  "id": "ncm",
+  "name": "@name",
+  "api": 3,
+  "exec": "ncm-plugin.exe",
+  "network": [
+    "music.163.com",
+    "interface.music.163.com"
+  ],
+  "provides": {
+    "source": {
+      "schemes": [
+        "ncm"
+      ],
+      "links": [
+        "ncmlist",
+        "ncm",
+        "music.163.com"
+      ],
+      "connect": {
+        "flows": [
+          "qr"
+        ]
+      },
+      "lists": true,
+      "option": {
+        "id": "quality",
+        "name": "@quality"
+      },
+      "style": {
+        "res": "{res} · {option}"
+      }
+    },
+    "metadata": true,
+    "thumbs": true
+  },
+  "strings": {
+    "zh-CN": { "name": "网易云音乐", "quality": "音质" },
+    "en": { "name": "NetEase Cloud Music", "quality": "Quality" }
+  }
+}

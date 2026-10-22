@@ -1,0 +1,52 @@
+[package]
+name = "novaplayer"
+version = "0.0.1"
+license = "MIT OR Apache-2.0"
+edition = "2021"
+
+[features]
+# Product/dev builds retain vendor ASIO output. WASAPI-only builds must opt out explicitly.
+default = ["asio"]
+asio = ["player-core/asio"]
+# Measuring builds only: counts allocations for `NOVAUI_TRACE` (novaui `trace::CountingAlloc`).
+count-allocs = []
+# The app's modules public for the L3 scenarios (maintained separately), with its test seams (an
+# in-memory account store, the demo plugin, row-cache counts); never in a product build.
+test-support = []
+
+[dependencies]
+novaui = { git = "https://github.com/wuuuming/NovaUI.git", rev = "b6046e597f941bb22649e763b1b6d4e8407ac9c8" }
+sha2 = "=0.11.0"
+image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png", "webp", "bmp"] }
+# Deflate for the online-metadata cache (already in the build through png).
+miniz_oxide = "=0.8.9"
+
+novaplayer-plugin-protocol = { path = "../plugin-protocol" }
+player-core = { git = "https://github.com/wuuuming/Player-Core.git", rev = "a63e7862a3dd8413f993e2b0fc594b9ead6eb273" }
+
+[target.'cfg(windows)'.dependencies]
+# A plugin's cover fetched over http(s) (the plugin kit's version): Windows' own TLS (SChannel)
+# and certificate store, so the program carries no TLS stack of its own.
+ureq = { version = "=3.1.4", default-features = false, features = ["native-tls", "gzip"] }
+windows = { workspace = true, features = ["Win32_Foundation", "Win32_UI_Shell", "Win32_System_Com", "Win32_Globalization", "Win32_UI_WindowsAndMessaging", "Win32_System_ProcessStatus", "Win32_System_Threading", "Win32_Security", "Win32_Security_Credentials", "Win32_Storage_FileSystem"] }
+
+[target.'cfg(not(windows))'.dependencies]
+# The same with rustls: Linux has no one TLS library every system carries.
+ureq = "=3.1.4"
+# Account tokens in the desktop's keyring (KWallet / GNOME Keyring / KeePassXC), over D-Bus.
+secret-service = { version = "=5.1.0", features = ["rt-async-io-crypto-rust"] }
+
+[build-dependencies]
+# Checks the fonts the build script downloads.
+sha2 = "0.10"
+# The image effects' GPU programs compiled at build time (NovaUI's).
+novaui-shaders = { git = "https://github.com/wuuuming/NovaUI.git", rev = "b6046e597f941bb22649e763b1b6d4e8407ac9c8" }
+
+[dev-dependencies]
+# Headless drivers (screenshots, increment audits) draw through `novaui::backend`.
+novaui = { git = "https://github.com/wuuuming/NovaUI.git", rev = "b6046e597f941bb22649e763b1b6d4e8407ac9c8", features = ["backend"] }
+# Tests play on player-core's null output (no device).
+player-core = { git = "https://github.com/wuuuming/Player-Core.git", rev = "a63e7862a3dd8413f993e2b0fc594b9ead6eb273", features = ["test-support"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,7 @@
+/target
+**/target
+*.pdb
+*.bgra
+/results
+/resources
+__pycache__/

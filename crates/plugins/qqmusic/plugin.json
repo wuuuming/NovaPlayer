@@ -1,0 +1,41 @@
+{
+  "id": "qqmusic",
+  "name": "@name",
+  "api": 3,
+  "exec": "qqmusic-plugin.exe",
+  "network": [
+    "ssl.ptlogin2.qq.com",
+    "ssl.ptlogin2.graph.qq.com",
+    "graph.qq.com",
+    "u.y.qq.com",
+    "c.y.qq.com",
+    "y.qq.com",
+    "y.gtimg.cn",
+    "isure.stream.qqmusic.qq.com",
+    "ws.stream.qqmusic.qq.com"
+  ],
+  "provides": {
+    "source": {
+      "schemes": [
+        "qq"
+      ],
+      "links": [
+        "qqmusic",
+        "y.qq.com",
+        "i.y.qq.com"
+      ],
+      "connect": {
+        "flows": [
+          "qr"
+        ]
+      },
+      "lists": true
+    },
+    "metadata": true,
+    "thumbs": true
+  },
+  "strings": {
+    "zh-CN": { "name": "QQ音乐" },
+    "en": { "name": "QQ Music" }
+  }
+}

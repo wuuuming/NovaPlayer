@@ -1,0 +1,52 @@
+# CI: fmt, build, clippy and the unit tests (L0, L2) on GitHub's Windows and Linux runners
+# (`python tools/ci.py`), on a push to `main`, a pull request or by hand. Nothing is set up first:
+# the build scripts fetch what they need (FFmpeg on Windows, the fonts). The L3 scenarios, the
+# screenshots and the perf targets are maintained separately.
+#
+# While NovaUI and Player-Core are private, the secret NOVA_READ_TOKEN (a fine-grained token with
+# Contents: read on the three repositories) lets Cargo reach them; without it the public
+# repositories are fetched as they are.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+jobs:
+  ci:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false   # its GITHUB_TOKEN header would stand in for NOVA_READ_TOKEN
+      - name: access to the private dependencies
+        shell: bash
+        run: |
+          TOKEN=$(printf %s "$TOKEN" | tr -d '\r\n\t ')
+          if [ -n "$TOKEN" ]; then
+            git config --global url."https://x-access-token:${TOKEN}@github.com/wuuuming/".insteadOf "https://github.com/wuuuming/"
+            git -C "$RUNNER_TEMP" ls-remote https://github.com/wuuuming/Player-Core.git HEAD > /dev/null \
+              || { echo "::error::NOVA_READ_TOKEN cannot read Player-Core (expired, deleted, or without Contents: read on it)"; exit 1; }
+          fi
+        env:
+          TOKEN: ${{ secrets.NOVA_READ_TOKEN }}
+      - name: toolchain
+        run: rustup toolchain install   # rust-toolchain.toml
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: Swatinem/rust-cache@v2
+      - name: fmt, build, clippy, unit tests
+        run: python tools/ci.py
+        env:
+          # ASIO's bindings (Windows) need libclang; the image has LLVM there.
+          LIBCLANG_PATH: ${{ runner.os == 'Windows' && 'C:\Program Files\LLVM\bin' || '' }}

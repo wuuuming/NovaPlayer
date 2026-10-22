@@ -1,0 +1,21 @@
+[package]
+name = "novaplayer-plugin-qqmusic"
+version = "0.0.1"
+license = "MIT OR Apache-2.0"
+edition = "2021"
+description = "NovaPlayer plugin: QQ Music account (QR sign-in), user playlists, highest-quality streams"
+
+[[bin]]
+name = "qqmusic-plugin"
+path = "src/main.rs"
+
+[dependencies]
+kit = { path = "../kit", package = "novaplayer-plugin-kit" }
+flate2 = "=1.1.10"
+des = "=0.8.1"
+cipher = { version = "=0.4.4", features = ["block-padding"] }
+rqrr = "=0.11.0"
+image = { version = "=0.25.10", default-features = false, features = ["png", "gif"] }
+
+[lints]
+workspace = true

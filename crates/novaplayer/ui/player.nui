@@ -1,0 +1,927 @@
+// NovaPlayer: the now-playing window (spec docs/novaplayer-spec.md §1–§8).
+// Everything that is layout is here: the size rules, the band, the columns, every placement and
+// every scaled size. The app (src/app.rs) sets the state bindings ($panel-open, $title-rows,
+// $has-artist…) and instantiates the list components; it computes no geometry.
+
+// ---- colours --------------------------------------------------------------------------------
+
+token wash-hover = #0FFFFFFF;
+token wash-press = #0AFFFFFF;
+token wash-lit = #2EFFFFFF;
+token wash-lit-press = #24FFFFFF;
+token row-current = #1FFFFFFF;       // the playing row's plate, a carried row's
+token rule = #14FFFFFF;
+token ink-off = #73FFFFFF;          // 0.45 of the primary ink: an order that is off
+token bar-empty = #3A808080;
+token bar-fill = #E6FFFFFF;
+// b7b33f5 sound_queue.rs::search_box strips ALL TextBox chrome. Unfocused: the two
+// sound_controls.rs::bar_material fills, in order. Focused: no plate, border or accent line.
+// Do not substitute generic input/WinUI tokens here; editor behavior is independent of chrome.
+token search-luminosity = #2BFFFFFF;
+token search-tint = #24808080;
+token rail-track = #0FFFFFFF;
+token rail-thumb = #8BFFFFFF;
+// A settings card's plate: the material lifted by a fixed white, so it stands a little lighter
+// than the field on most covers (Windows' cards over Mica); pointed at, a little lighter still;
+// pressed, back toward the material (WinUI's card fills: rest 5 %, hover 8 %, press 3 %, here
+// over a darker base).
+token settings-plate = #17FFFFFF;
+token settings-plate-hover = #24FFFFFF;
+token settings-plate-press = #10FFFFFF;
+// Between the rows of a settings list: a thin darker seam, as Windows' expander items stand a
+// hair apart (for lists; elsewhere levels are told by fill alone).
+token settings-rule = #33000000;
+// Rest vs state: a white wash over the backdrop means the pointer, a lit or a current thing
+// (wash-*, row-current); a thing at rest that holds others is the flyouts' material without its
+// blur and grain (material: acrylic-flat), never a bare wash, so it never reads as hovered or
+// selected. It keeps the cover's hue at one dark level, so words read on any cover; a settings
+// card lifts that level by a fixed white of its own (settings-plate), above which its pointer
+// states stay distinct. No outlines:
+// a plate is told from the backdrop by its fill alone.
+let rail_thin = 2;
+let rail_width = 12;
+let rail_thumb_width = 6;
+let rail_minimum = 24;
+let rail_enter = 400ms;
+let rail_leave = 2s;
+let rail_motion = 167ms;
+let rail_ease_x1 = 0;
+let rail_ease_y1 = 0;
+let rail_ease_x2 = 0;
+let rail_ease_y2 = 1;
+let rail_inset = 6;
+// How far past a control the settings page scrolls to show it when the keyboard focus comes to it.
+let settings_reveal_margin = 12;
+// A switch's motion, after WinUI's ToggleSwitch (microsoft-ui-xaml,
+// ToggleSwitch_themeresources.xaml): a flip moves the knob the 20 dips between the ends with
+// RepositionThemeAnimation (367 ms on cubic-bezier(0.1, 0.9, 0.2, 1), WinJS's reposition) and
+// cross-fades the track's and the knob's off and on looks, linear, over ControlFasterAnimationDuration
+// (83 ms); the knob is 12 dips at rest, 14 under the pointer, 17 × 14 pressed, and goes between
+// them over 83 ms on ControlFastOutSlowInKeySpline, cubic-bezier(0, 0, 0, 1).
+let switch_travel = 20;
+let switch_slide = 367ms;
+let switch_slide_x1 = 0.1;
+let switch_slide_y1 = 0.9;
+let switch_slide_x2 = 0.2;
+let switch_slide_y2 = 1;
+let switch_fade = 83ms;
+let switch_resize = 83ms;
+let switch_resize_x1 = 0;
+let switch_resize_y1 = 0;
+let switch_resize_x2 = 0;
+let switch_resize_y2 = 1;
+let switch_knob = 12;
+let switch_knob_over = 14;
+let switch_knob_press = 17;
+// Middle-button autoscroll (browsers'): within the dead zone of where the press began the list
+// stands; past it, it scrolls toward the pointer at gain dips/s per dip of distance, capped.
+let autoscroll_dead = 10;
+let autoscroll_gain = 8;
+let autoscroll_max = 4000;
+// The way into the side panel over the artwork: shown while the pointer moves over the artwork
+// and for way_in_linger after, in over way_in_show on cubic-bezier(0.1, 0.9, 0.2, 1) (WinUI's
+// fast-out-slow-in), out over way_in_hide on cubic-bezier(0.7, 0, 1, 0.5) (its accelerate).
+let way_in_linger = 2s;
+let way_in_show = 167ms;
+let way_in_show_x1 = 0.1;
+let way_in_show_y1 = 0.9;
+let way_in_show_x2 = 0.2;
+let way_in_show_y2 = 1;
+let way_in_hide = 333ms;
+let way_in_hide_x1 = 0.7;
+let way_in_hide_y1 = 0;
+let way_in_hide_x2 = 1;
+let way_in_hide_y2 = 0.5;
+// While a song opens: a segment sweep_share of the bar wide crosses it every sweep_period on the
+// cubic ease-in-out (WinUI's indeterminate ProgressBar).
+let sweep_share = 0.3;
+let sweep_period = 1.8s;
+// The volume's number over its button while the wheel turns it: vol_tip_gap above it, kept
+// vol_tip_margin from the window's left, up for vol_tip_time after the last turn.
+let vol_tip_gap = 6;
+let vol_tip_margin = 4;
+let vol_tip_time = 1s;
+
+// ---- the shape and the size rules (4.2) -----------------------------------------------------
+// The shape first: two columns in a landscape window (wider than 1.2 : 1 under the title bar, at
+// least 840 dips), else one (and always with the settings page's 单列). Decided in dips, before
+// any scale, so the scale never decides its own layout.
+// room: the window over the design box of its shape: a landscape window (`wide`), two columns'
+// 2560×1440 at 150 % (1706.667×928 under the title bar); else one column's 4:5 box (744×928)
+// that holds the artwork's column. A half-screen window is one column at its design size, not two
+// squeezed to half. 单列 only arranges: in a landscape window it keeps the wide box, so choosing
+// it never rescales. Between the two (the 0.3 s switch) the box eases with the shape.
+// text_scale text, c chrome, frame_scale frame, cover_scale cover: continuous everywhere, so a dragged border moves
+// every size by no more than it moves.
+
+let top = 32;
+let aspect = window.w / max(window.h - top, 1);
+latch wide { enter: aspect >= 1.2 && window.w >= 840; keep: aspect >= 1.15 && window.w >= 810; }
+let two = wide && !$single-column;
+let columns = tween(two ? 1 : 0, two, 300ms);       // between one column and two, over 0.3 s
+let box = tween(wide ? 1 : 0, wide, 300ms);         // the design box, with the window's shape
+let design_w = lerp(744, 1706.667, box);
+let room = max(0, min(window.w / design_w, (window.h - top) / 928));
+let qk = pow(room, 0.647070);
+let tail = room - 2.25;
+let text_scale = room < 1 ? max(0.85, qk) : room <= 2.25 ? qk : 2 - 0.31 * exp(-1.56781 * tail - 1.10605 * tail * tail);
+let cx = (room - 0.94) / 0.06;
+let chrome_scale = room <= 0.94 ? 0.98 : room < 1 ? 0.98 + 0.0442922 * pow(cx, 3) - 0.0274085 * pow(cx, 4) + 0.0031164 * pow(cx, 5) : text_scale;
+let frame_scale = room <= 1.5 ? text_scale : text_scale * (1 + 0.2 * smoothstep5((room - 1.5) / 0.75));
+let cover_scale = room < 1 ? qk + (room - qk) * smoothstep5((1 - room) / 0.12) : frame_scale;
+// Headings under the law (novaplayer-spec.md, "Type under the scaling law"): reading text is `base × text_scale`; a heading is the
+// body's size times its ratio to the body, that ratio compressed toward its square root as the
+// window gets small (room 0.9 → 0.5: Title 28 ends at Subtitle's 20), so on a GPD or a 200% laptop
+// a heading does not take the room; and as text grows past its design size a heading gets
+// lighter, by 50 at 1440p, 100 at 4K at 100% (`heading_lighten`, in novaui's steps of 50).
+// The type ramp at the law: reading text is `base × text_scale` (novaui: a token's parts may be
+// expressions). Headings are `subtitle_size` / `heading_size` / `title_size` below.
+token body = 14 * text_scale, 20 * text_scale, 400;
+token body-strong = 14 * text_scale, 20 * text_scale, 600;
+token caption = 12 * text_scale, 16 * text_scale, 400;
+token caption-strong = 12 * text_scale, 16 * text_scale, 600;
+token subtitle = 20 * text_scale, 28 * text_scale, 600;
+let heading_squeeze = 0.5 + 0.5 * smoothstep5((room - 0.5) / 0.4);
+let subtitle_size = 14 * text_scale * pow(18 / 14, heading_squeeze);
+let heading_size = 14 * text_scale * pow(20 / 14, heading_squeeze);
+let title_size = 14 * text_scale * pow(2, heading_squeeze);
+let heading_lighten = 50 * round(2 * smoothstep5((text_scale - 1) / 0.7));
+let caption_scale = max(text_scale, 1);                               // captions never under 12 dip
+// A flyout and a text box are body text with room around it: everything in them, rows, gaps,
+// icons, widths, grows with the text (`text_scale`), as the settings page does. A row: `flyout_row`.
+let flyout_row = 36 * text_scale;
+// Flyout widths by kind (menus::Kind::width); a flyout as wide as its rows stays between
+// flyout_w_min and flyout_w_max. The plugin flyout stands against the app one's edge
+// (flyout_side_gap from the row that opened it: the app flyout's padding), its top level with
+// that row.
+let flyout_w = 320 * text_scale;
+let flyout_w_narrow = 160 * text_scale;
+let flyout_w_cover = 200 * text_scale;
+let flyout_w_drag = 280 * text_scale;
+let flyout_w_min = 200 * text_scale;
+let flyout_w_min_output = 240 * text_scale;
+let flyout_w_max = 360 * text_scale;
+let flyout_pad = 4;
+let flyout_side_gap = flyout_pad;
+
+// ---- the band and the columns (4.3, 4.5, 4.6) -----------------------------------------------
+
+let band_x = 48 * chrome_scale;
+let band_y = top + 20 * chrome_scale;
+let band_w = max(0, window.w - 96 * chrome_scale);
+let band_h = max(0, window.h - band_y - 24 * chrome_scale);
+let safe_w = min(band_w, 1610.667 * frame_scale);
+// One column takes the band's whole height (a tall window gives the lyrics its height); two
+// columns stop at the design box's.
+let safe_h = lerp(band_h, min(band_h, 884 * frame_scale), columns);
+let safe_x = band_x + (band_w - safe_w) / 2;
+let safe_y = band_y + (band_h - safe_h) / 2;
+
+let open = $panel-open;                              // the side panel's eased 0..1 (the app's motion)
+let left_w = 0.44 * safe_w;
+// The artwork's column gives the side panel its room as it comes in; in one column it fades and its
+// controls sink to the band's foot.
+let area_w = lerp(safe_w, safe_w + (left_w - safe_w) * open, columns);
+// The transport's natural row: play on the column's centre; each half holds half of play, a gap,
+// the side button, the gap between groups and the three right-hand buttons with theirs.
+let ctl_need = (40 + 2 * (8 + 32 + 8 + 3 * 32 + 2 * 4)) * chrome_scale;
+let ctl_h = chrome_scale * (20 + 8 + 40 + ($has-top-row ? 32 : 0));
+
+// The side panel: beside the artwork's column, or (one column) the band down to the controls.
+let panel_x = lerp(safe_x, safe_x + left_w + 80 * chrome_scale, columns);
+let panel_w = lerp(safe_w, safe_w - left_w - 80 * chrome_scale, columns);
+let panel_h = lerp(max(0, safe_h - ctl_h - 16 * chrome_scale), safe_h, columns);
+let queue_head_h = 32 * chrome_scale + 36 * text_scale;
+// 7.x: the sung line's size from the side panel's width (17 dips of width per point at the text
+// factor, 28..40 points), its line 1.3 of it; a reading under it 0.6 of it (14 at least), its
+// line 1.35 of that.
+let lyric_pt = clamp(round(panel_w / (17 * text_scale)), 28, 40);
+let lyric_size = lyric_pt * text_scale;
+let lyric_line = round(1.3 * lyric_pt) * text_scale;
+let lyric_reading_pt = max(14, round(0.6 * lyric_pt));
+let lyric_reading = lyric_reading_pt * text_scale;
+let lyric_reading_line = round(1.35 * lyric_reading_pt) * text_scale;
+let queue_view_h = max(0, panel_h - queue_head_h);
+
+let area_mid = safe_x + area_w / 2;
+let strength = 1 - open * (1 - columns);
+let to_foot = open * (1 - columns);
+
+// ---- the column's block (4.7) ---------------------------------------------------------------
+
+let col_w = min(area_w, 520 * text_scale);
+let words_h = 36 * text_scale * $title-rows + ($has-artist ? 28 * text_scale : 0) + ($has-album ? 24 * text_scale : 0) + ($has-res ? 24 * text_scale : 0);
+let below = words_h + 16 * chrome_scale + ctl_h;
+let art_fit = safe_h - 24 * chrome_scale - below - 20 * chrome_scale;
+// A tall window (more room down than across): the artwork takes the column's width instead of the
+// size rules' cap, so the face is not a stamp in an empty band. Eased in from a square room to one
+// 1.4 times as tall as wide: a dragged border never makes it jump.
+let tall = smoothstep5((art_fit / max(area_w, 1) - 1) / 0.4);
+let art_room = min(art_fit, area_w, lerp(520 * cover_scale, max(520 * cover_scale, area_w), tall));
+let shows_art = art_room >= 96 * text_scale;
+let art = shows_art ? art_room : 0;
+let block = shows_art ? art + 20 * chrome_scale + below : below;
+let block_y = safe_y + safe_h / 2 - block / 2;
+let words_y = block_y + (shows_art ? art + 20 * chrome_scale : 0);
+let ctl_w = clamp(shows_art ? art : col_w, min(352 * chrome_scale, area_w), area_w);
+let ctl_y = lerp(block_y + block - ctl_h, safe_y + safe_h - ctl_h, to_foot);
+// The transport's own scale: the window's (c), and smaller still when the column is narrower
+// than the seven buttons' natural row (prev/play/next centred, three on the right, one on the
+// left, with room between the groups). Floors keep every button a pointer target (24 dips).
+let control_squeeze = clamp(ctl_w / ctl_need, 0.75, 1);
+let btn = max(24, 32 * chrome_scale * control_squeeze);
+let big = max(28, 40 * chrome_scale * control_squeeze);
+let ctl_btn = max(28, 32 * chrome_scale);                 // the .ctl style's own size (window scale only)
+// The transport's three groups: the centre one always on the bar's centre (under the time bar's
+// middle). In a narrow column its gaps and the right group's close up; the left keeps its room.
+let ctl_side_l = btn + 8 * chrome_scale;
+let ctl_side_r = 3 * btn + 8 * chrome_scale * control_squeeze + 8 * chrome_scale * control_squeeze;
+let ctl_mid = big + 2 * btn + 16 * chrome_scale * control_squeeze;
+let ctl_tight = ctl_w / 2 - ctl_mid / 2 < ctl_side_r;
+// The centre group's gaps, and the right group's: as wide as the half leaves them (6 dips kept
+// clear of the centre group), up to 4.
+let ctl_gap = ctl_tight ? 2 * chrome_scale : 8 * chrome_scale * control_squeeze;
+let right_gap = clamp((ctl_w / 2 - (big + 2 * btn + 2 * ctl_gap) / 2 - 3 * btn - 6 * chrome_scale) / 2, 0, 4 * chrome_scale);
+// The volume bar, in the button row at every width: what the left half leaves between the speaker
+// button and the centre group (the centre group as it stands, its gaps included; 6 dips either
+// side of the bar when tight, 8 otherwise). At most 120.
+let gain_gap = ctl_tight ? 6 * chrome_scale : 8 * chrome_scale;
+let gain_room = ctl_w / 2 - (big + 2 * btn + 2 * ctl_gap) / 2 - btn - 2 * gain_gap;
+let gain_w = clamp(gain_room, 0, 120 * chrome_scale);
+let gain_on = gain_w >= 24 * chrome_scale;
+// The lyrics page's tools slot: its foot, at its right; in two columns level with the transport's
+// buttons (the left column's controls and its controls on one line).
+let tools_y = lerp(safe_y + panel_h - btn, ctl_y + ctl_h - 40 * chrome_scale + (40 * chrome_scale - btn) / 2, columns);
+let dlg_w = min(440 * text_scale, window.w - 32);            // the import dialog's card, centred
+let dlg_x = (window.w - dlg_w) / 2;
+let import_row = 40 * text_scale;                              // a list's row, a group's heading
+let import_head = 32 * text_scale;
+let dlg_chrome = (24 + 28 + 12 + 12 + 32 + 24) * text_scale;     // the card less its list: padding, title, gaps, footer
+
+// ---- styles ---------------------------------------------------------------------------------
+
+style caption-btn { width: caption-button-width; height: titlebar-height; bg-hover: wash-hover; bg-press: wash-press;
+                    fg: text-primary; icon-size: 10; }
+style ctl { width: ctl_btn; height: ctl_btn; radius: radius-control; bg-hover: wash-hover; bg-press: wash-press;
+            bg-lit: wash-lit; bg-lit-press: wash-lit-press; fg: text-primary; fg-disabled: text-disabled; fg-off: ink-off;
+            cursor: hand; icon-size: 18 * chrome_scale; }
+style link { underline-hover: true; cursor: hand; hit: true; fg: text-secondary; fg-hover: text-primary; }
+// The line under the artwork (4.7): the stream's own resolution, then the note a plugin's
+// `style.res` template adds after it (an option value's name: "高清臻音"). Two slots, styled
+// apart; the app fills only their words.
+style res { type: caption; fg: text-tertiary; shrink: 1; min-width: 0; }
+style res-note { type: caption-strong; fg: text-secondary; shrink: 0; }
+style res-line { width: auto; max-width: 100%; height: 20 * text_scale; padding: 0 6 * text_scale; gap: 4 * text_scale; align: center;
+                 align-self: center; margin-top: 6 * text_scale; radius: radius-control; }
+// Menus: the in-app acrylic (blurred backdrop, luminosity, tint, noise), the flyout's 1 px
+// stroke, its soft shadow outside only (WinUI MenuFlyoutPresenter).
+style menu { position: absolute; shown: false; layer: true; material: acrylic; border: 1 stroke-flyout; radius: radius-overlay;
+             shadow: shadow-flyout; padding: flyout_pad; hit: true; }
+style menu-rail { role: none; focusable: false; position: absolute; left: 0; top: 0; width: rail_width; height: 0; visible: false; opacity: 0;
+                  hit: true; drag-events: true; hover-events: true; wheel-events: true; }
+// Lit: the row the keys are on, a drop target, the row whose panel is open (WinUI's sub-item).
+style menu-item { height: flyout_row; padding: 0, 11 * text_scale; gap: 12 * text_scale; radius: radius-control; bg-hover: wash-hover; bg-press: wash-press;
+                  bg-lit: wash-hover; bg-lit-press: wash-press; hit: true; shrink: 0; }
+// WinUI CheckBox: a 20-dip box (radius 4) beside its words, the whole row pressable. The app
+// sets the state (outline / accent plate with a check / with a dash).
+style check-row { gap: 12 * text_scale; align: center; radius: radius-control; bg-hover: wash-hover; bg-press: wash-press; hit: true; cursor: hand; shrink: 0; }
+// A settings card: a plate at rest (acrylic-flat lifted by settings-plate, see the rest-vs-state
+// note at the top), its corners the overlays' radius.
+style settings-card { width: 100%; min-height: 68 * text_scale; padding: 12 * text_scale, 16 * text_scale; gap: 20 * text_scale; align: center; shrink: 0;
+                      radius: radius-overlay; material: acrylic-flat; bg: settings-plate; }
+// A card with a list under it (WinUI's SettingsExpander, always open, as Windows' sound output
+// list): one plate on the cards' fill (settings-plate), the card's row on top, then the items,
+// a thin seam above each (settings-rule), their words in line with the card's.
+style settings-group { width: 100%; radius: radius-overlay; material: acrylic-flat; bg: settings-plate; shrink: 0; }
+style settings-head { width: 100%; min-height: 68 * text_scale; padding: 12 * text_scale, 16 * text_scale; gap: 20 * text_scale; align: center; shrink: 0;
+                      radius: radius-overlay; }
+style settings-item { width: 100%; min-height: 60 * text_scale; padding: 10 * text_scale, 16 * text_scale, 10 * text_scale, 56 * text_scale;
+                      gap: 20 * text_scale; align: center; shrink: 0; }
+style settings-nav { width: 100%; min-height: 68 * text_scale; padding: 12 * text_scale, 16 * text_scale; gap: 20 * text_scale; align: center; shrink: 0;
+                     radius: radius-overlay; material: acrylic-flat; bg: settings-plate; bg-hover: settings-plate-hover;
+                     bg-press: settings-plate-press;
+                     hit: true; cursor: hand; }
+style crumb { font-size: title_size; line: title_size * 36 / 28; weight: 600 - heading_lighten; lines: 1; shrink: 0; }
+// An earlier level in the title: no underline (Apple Music's), the secondary ink lit on hover.
+style crumb-link { cursor: hand; hit: true; fg: text-secondary; fg-hover: text-primary; }
+style check-box { width: 20 * text_scale; height: 20 * text_scale; radius: 4 * text_scale; border: 1 #8BFFFFFF; justify: center; align: center; shrink: 0; }
+style text-btn { height: 32 * text_scale; padding: 0, 12 * text_scale; radius: radius-control; bg: control-fill; bg-hover: control-fill-secondary;
+                 bg-press: control-fill-tertiary; border: 1 stroke-control; fg: text-primary; type: body; cursor: hand; }
+// WinUI AccentButton (dark): AccentFillColorDefault, hover/press the same RGB at 0.9/0.8,
+// TextOnAccentFillColorPrimary black.
+style accent-btn { height: 32 * text_scale; padding: 0, 12 * text_scale; radius: radius-control; bg: accent; bg-hover: #E660CDFF;
+                   bg-press: #CC60CDFF; fg: black; type: body; cursor: hand; }
+
+// ---- list pieces the app instantiates -------------------------------------------------------
+
+// 8.2: a 64-dip pitch; the plate (hover, the playing song) is the row less 2 dips at the top and
+// the bottom, and reaches 8 dips past the side panel's left edge so the covers line up with the heading.
+component QueueRow(title, by) {
+  Row #row { role: list-item; position: absolute; left: 0; right: 0; top: 0; height: 60 * text_scale; padding: 0, 8 * text_scale, 0, 8 * text_scale;
+             gap: 16 * text_scale; hover-events: true; hit: true; radius: 4 * text_scale; bg-hover: wash-hover; bg-lit: row-current; cursor: hand;
+    Image #thumb { width: 48 * text_scale; height: 48 * text_scale; radius: 4 * text_scale; bg: wash-hover; shrink: 0; }
+    // basis 0: the room is the row's less the fixed parts, whatever the title's length (a long
+    // title once shrank the buttons beside it and moved the length row by row).
+    Column #words { grow: 1; shrink: 1; basis: 0; min-width: 0; justify: center;
+      Text #name { text: $title; font-size: 18 * text_scale; line: 24 * text_scale; fg: text-primary; width: 100%; }
+      Row #by { width: 100%; height: 20 * text_scale;
+        Text #artist .link { type: body; shrink: 1; }
+        Text #sep { text: " · "; type: body; fg: text-secondary; shrink: 0; }
+        Text #album .link { type: body; shrink: 1; }
+      }
+    }
+    Text #len { type: body; fg: text-secondary; shrink: 0; }
+    Button #remove .ctl { width: 32 * text_scale; height: 32 * text_scale; icon: Dismiss; icon-size: 12 * text_scale; shown: false; fg: text-secondary; shrink: 0; label: @a11y.remove; }
+    Button #grip .ctl { width: 32 * text_scale; height: 32 * text_scale; icon: ReOrderDotsVertical; icon-size: 16 * text_scale; fg: text-secondary; shrink: 0;
+                        drag-events: true; cursor: grab; role: none; focusable: false; }
+    Box #rule { position: absolute; left: 72 * text_scale; right: 8 * text_scale; bottom: -2 * text_scale - 0.5; height: 1; bg: rule; }
+  }
+}
+
+// A lyric group's place in the side panel. Its lines are the lyric style's (ui/lyric-style.nui).
+component LyricGroup() {
+  Column #group { width: 100%; hit: true; cursor: hand; gap: 4; padding: 0, 0, 24 * text_scale, 0; }
+}
+
+// A layer line's box under a group's lines (a romanisation, a translation): it clips the line
+// while the layer folds in or out from under the line above (the side panel writes its height).
+component LyricLayer() {
+  Column #layer { width: 100%; clip: true; shrink: 0; }
+}
+
+// 11.2: three groups; the label a caption in the secondary ink, 96 wide; the value body, two
+// lines at most; the page centred, at most 520 dip.
+// 11.x (b7b33f5 song_info.rs): three groups 28 dips apart, rows 12 apart; the label (Body,
+// secondary) in a 112-dip column, the value (BodyStrong, primary; "-" tertiary) 16 dips after it,
+// up to three lines. All of it at the page's text factor.
+component InfoGroup() {
+  Column #group { width: 100%; gap: 12 * text_scale; margin-top: 28 * text_scale; }
+}
+
+// The settings page, after WinUI's SettingsCard (Gallery's settings page): a section's
+// heading over its cards, 4 apart; a card is an icon, a title over its description, and what the
+// card holds at its right (the rows given to the card follow its words). At the page's text factor.
+component SettingsHeading(title) {
+  Text #heading { text: $title; type: body-strong; fg: text-primary;
+                  margin: 28 * text_scale, 0, 8 * text_scale, 0; shrink: 0; }
+}
+
+// A dropdown: the search box's plate (luminosity under tint), no border in any state,
+// its value at the left and a chevron at the right. Hover only washes it; while its list is up it
+// keeps that same plate (no accent, no ring). The list is an ordinary flyout (#flyout).
+component Dropdown(action) {
+  Stack #drop { width: 220 * text_scale; height: 32 * text_scale; shrink: 0; radius: radius-control; hit: true; cursor: hand;
+    Box #lum { left: 0; top: 0; right: 0; bottom: 0; radius: radius-control; bg: search-luminosity; }
+    Box #tint { left: 0; top: 0; right: 0; bottom: 0; radius: radius-control; bg: search-tint; }
+    Row #face { left: 0; top: 0; right: 0; bottom: 0; padding: 0, 8 * text_scale, 0, 11 * text_scale; gap: 8 * text_scale; align: center;
+                radius: radius-control; bg-hover: wash-hover; bg-press: wash-press; hit: true; cursor: hand;
+                on-click: $action;
+      Text #value { type: body; fg: text-primary; grow: 1; shrink: 1; min-width: 0; lines: 1; }
+      Icon #chevron { icon: ChevronDown; icon-size: 12 * text_scale; fg: text-secondary; shrink: 0; }
+    }
+  }
+}
+
+// A dropdown whose box takes typing (WinUI's editable ComboBox), for a long list: the same plate
+// as the search box's, which focus removes; focus selects the name, so typing replaces it and
+// narrows the list; the chevron opens all of it.
+component ComboBox(action, edit, hint) {
+  Stack #drop { width: 220 * text_scale; height: 32 * text_scale; shrink: 0; radius: radius-control;
+    Box #lum { left: 0; top: 0; right: 0; bottom: 0; radius: radius-control; bg: search-luminosity; }
+    Box #tint { left: 0; top: 0; right: 0; bottom: 0; radius: radius-control; bg: search-tint; }
+    Edit #value { left: 0; top: 0; right: 0; bottom: 0; padding: 0, 34 * text_scale, 0, 11 * text_scale; radius: radius-control;
+                  type: body; fg: text-primary; hint: $hint; select-on-focus: true; on-edit: $edit;
+      Button #chevron .ctl { right: 2 * text_scale; top: 2 * text_scale; width: 28 * text_scale; height: 28 * text_scale; icon: ChevronDown;
+                             icon-size: 12 * text_scale; fg: text-secondary; on-click: $action; label: @a11y.open-list; }
+    }
+  }
+}
+
+component SettingsCard(icon, title, desc) {
+  Row #card .settings-card { role: group; label: $title;
+    Icon #icon { icon: $icon; icon-size: 20 * text_scale; fg: text-primary; shrink: 0; }
+    Column #words { grow: 1; shrink: 1; min-width: 0;
+      Text #title { text: $title; type: body; fg: text-primary; }
+      Text #desc { text: $desc; type: caption; fg: text-secondary; lines: 0; width: 100%; }
+    }
+  }
+}
+
+// A card with its list under it (`settings-group`): what the card holds goes in `#card`, the
+// items (`SettingsItem`) in `#group`.
+component SettingsGroup(icon, title, desc) {
+  Column #group .settings-group {
+    Row #card .settings-head {
+      Icon #icon { icon: $icon; icon-size: 20 * text_scale; fg: text-primary; shrink: 0; }
+      Column #words { grow: 1; shrink: 1; min-width: 0;
+        Text #title { text: $title; type: body; fg: text-primary; }
+        Text #desc { text: $desc; type: caption; fg: text-secondary; lines: 0; width: 100%; }
+      }
+    }
+  }
+}
+
+// An item of a group's list: the seam above it, its title over its description (none: the title
+// alone, centred), what it holds at its right (`#card`).
+component SettingsItem(title, desc) {
+  Column #item { width: 100%; shrink: 0;
+    Box #rule { width: 100%; height: 1; bg: settings-rule; shrink: 0; }
+    Row #card .settings-item { role: group; label: $title;
+      Column #words { grow: 1; shrink: 1; min-width: 0;
+        Text #title { text: $title; type: body; fg: text-primary; }
+        Text #desc { text: $desc; type: caption; fg: text-secondary; lines: 0; width: 100%; shown: $desc != ""; }
+      }
+    }
+  }
+}
+
+// A subheading inside a group's list (a CLAP module's name), in line with the items' words.
+component SettingsSubheading(title) {
+  Column #item { width: 100%; shrink: 0;
+    Box #rule { width: 100%; height: 1; bg: settings-rule; shrink: 0; }
+    Text #heading { text: $title; type: body-strong; fg: text-primary; padding: 12 * text_scale, 16 * text_scale, 4 * text_scale, 56 * text_scale; }
+  }
+}
+
+// A card that opens a deeper level of the settings page: the whole card is its button.
+component SettingsNav(icon, title, desc, action) {
+  Row #card .settings-nav { on-click: $action;
+    Icon #icon { icon: $icon; icon-size: 20 * text_scale; fg: text-primary; shrink: 0; }
+    Column #words { grow: 1; shrink: 1; min-width: 0;
+      Text #title { text: $title; type: body; fg: text-primary; }
+      Text #desc { text: $desc; type: caption; fg: text-secondary; lines: 0; width: 100%; }
+    }
+    Icon #chevron { icon: ChevronRight; icon-size: 12 * text_scale; fg: text-secondary; shrink: 0; }
+  }
+}
+
+// The breadcrumb's segments: an earlier level (opens it), the separator, the level shown. The
+// view lowers the separator to the middle of the words' capitals (`FontMetrics::cap_middle`).
+component Crumb(text, action) {
+  Text #t .crumb .crumb-link { text: $text; on-click: $action; }
+}
+component CrumbSep() {
+  Icon #sep { icon: ChevronRight; icon-size: 16 * text_scale; fg: text-secondary; shrink: 0; }
+}
+component CrumbHere(text) {
+  Text #t .crumb { text: $text; fg: text-primary; shrink: 1; min-width: 0; }
+}
+
+// A switch, WinUI's ToggleSwitch in the face's inks: off, the search box's plate (no border) with
+// a grey knob; on, the bars' white fill with a black knob at the right. Its words at its left. Each look is a node of its own (the
+// track's `#outline` and `#fill`, the knob's `#off` and `#on`) so the view can cross-fade them;
+// `#knob` stands at the end shown and is its largest (pressed), centred where the 12-dip knob's
+// centre is, 10 dips in from that end (`novaui::widgets::switch`, `switch_*` above).
+component Toggle(action, on, words) {
+  Row #row { gap: 12 * text_scale; align: center; shrink: 0; hit: true; cursor: hand; on-click: $action;
+             hover-events: true; press-events: true; role: switch; lit: $on;
+    Text #state { text: $words; type: body; fg: text-primary; shrink: 0; }
+    // Its hover wash makes the track a press target of its own: it does what the row does.
+    Stack #track { width: 40 * text_scale; height: 20 * text_scale; radius: 10 * text_scale; bg-hover: wash-hover; on-click: $action;
+                   press-events: true; shrink: 0; role: none; focusable: false;
+      Box #outline { left: 0; top: 0; width: 40 * text_scale; height: 20 * text_scale; radius: 10 * text_scale; bg: search-luminosity;
+                     opacity: $on ? 0 : 1;
+        Box #tint { left: 0; top: 0; width: 40 * text_scale; height: 20 * text_scale; radius: 10 * text_scale; bg: search-tint; }
+      }
+      Box #fill { left: 0; top: 0; width: 40 * text_scale; height: 20 * text_scale; radius: 10 * text_scale; bg: bar-fill;
+                  opacity: $on ? 1 : 0; }
+      Stack #knob { left: ($on ? 30 : 10) * text_scale - switch_knob_press * text_scale / 2;
+                    top: 10 * text_scale - switch_knob_over * text_scale / 2;
+                    width: switch_knob_press * text_scale; height: switch_knob_over * text_scale;
+        Box #off { left: 0; top: 0; width: switch_knob_press * text_scale; height: switch_knob_over * text_scale;
+                   radius: switch_knob_over * text_scale / 2; bg: #CCFFFFFF; opacity: $on ? 0 : 1; }
+        Box #on { left: 0; top: 0; width: switch_knob_press * text_scale; height: switch_knob_over * text_scale;
+                  radius: switch_knob_over * text_scale / 2; bg: #FF000000; opacity: $on ? 1 : 0; }
+      }
+    }
+  }
+}
+
+// An effect's parameter: the face's volume bar (`#gain`), a pill with the white fill up to the
+// value and no thumb. The view sets the fill's width (`settings_page::show_slider`, which knows
+// the bar's width: 200).
+component ParamSlider() {
+  Box #bar { width: 200 * text_scale; height: 32 * text_scale; shrink: 0; hit: true; drag-events: true; cursor: hand; justify: center;
+    Box #track { width: 100%; height: 6 * text_scale; radius: 3 * text_scale; bg: bar-empty; }
+    Box #fill { left: 0; top: 13 * text_scale; width: 0; height: 6 * text_scale; radius: 3 * text_scale; bg: bar-fill; }
+  }
+}
+
+// WinUI's CheckBox, three states: 0 off (the outline), 1 on (the accent plate and its check),
+// 2 some (the plate and a dash).
+component CheckBox(state) {
+  Box #box .check-box { bg: $state > 0 ? accent : #00000000; border: $state > 0 ? 0 : 1;
+    Icon #mark { icon: Checkmark; icon-size: 12 * text_scale; fg: #FF000000; shown: $state == 1; }
+    Icon #dash { icon: CaptionMinimize; icon-size: 12 * text_scale; fg: #FF000000; shown: $state == 2; }
+  }
+}
+
+// A card's button (the import dialog's text button).
+component CardButton(label, action) {
+  Button #btn .text-btn { text: $label; on-click: $action; shrink: 0; }
+}
+
+component InfoRow(label, value) {
+  Row #row { width: 100%; align: start; gap: 16 * text_scale;
+    Text { text: $label; type: body; fg: text-secondary; lines: 2; width: 112 * text_scale; shrink: 0; }
+    Text #value { text: $value; type: body-strong; fg: text-primary; lines: 3;
+                  grow: 1; shrink: 1; min-width: 48 * text_scale; }
+  }
+}
+
+component MenuItem(icon, label) {
+  Row #item .menu-item { width: 100%;
+    Icon #icon { icon: $icon; icon-size: 16 * text_scale; fg: text-primary; fg-disabled: text-disabled; fg-off: #00000000; }
+    Text #label { text: $label; type: body; fg: text-primary; fg-disabled: text-disabled; grow: 1; shrink: 1; min-width: 0; }
+    Text #note { type: body; fg: text-secondary; fg-disabled: text-disabled; shrink: 0; }
+  }
+}
+
+// The import dialog's rows: a group's heading, and a list to pick.
+component ImportGroup(label) {
+  Row #group { width: 100%; height: import_head; align: end; padding: 0, 8 * text_scale, 6 * text_scale, 8 * text_scale; shrink: 0;
+    Text { text: $label; type: body-strong; fg: text-secondary; }
+  }
+}
+
+// A flyout's section heading (the plugin panel's), at the flyout's text factor.
+component MenuGroup(label) {
+  Row #group { width: 100%; height: 32 * text_scale; align: end; padding: 0, 8 * text_scale, 6 * text_scale, 8 * text_scale; shrink: 0;
+    Text { text: $label; type: body-strong; fg: text-secondary; }
+  }
+}
+
+component ImportRow(name, note, state) {
+  Row #row .check-row { width: 100%; height: import_row; padding: 0, 8 * text_scale;
+    CheckBox($state) #check;
+    Text #name { text: $name; type: body; fg: text-primary; grow: 1; shrink: 1; min-width: 0; }
+    Text #note { text: $note; type: body; fg: text-secondary; shrink: 0; }
+  }
+}
+
+component MenuRule() {
+  Box { width: 100%; height: 1; bg: divider; margin: 4 0; }
+}
+
+// A flyout row that is a text box (a playlist's new name): its icon, then the box.
+component MenuEdit(icon, hint, action) {
+  Row #item .menu-item { width: 100%; bg-hover: none; bg-press: none;
+    Icon #icon { icon: $icon; icon-size: 16 * text_scale; fg: text-primary; }
+    Edit #edit { grow: 1; height: 28 * text_scale; padding: 0, 8 * text_scale; radius: 4; bg: bar-empty; fg: text-primary;
+                 type: body; hint: $hint; on-edit: $action; }
+  }
+}
+
+// A row's delete at its end: ✕ on hover; pressed once it asks (`asking`), a second press deletes.
+component MenuDelete(action, asking) {
+  Button #del { width: $asking ? 52 * text_scale : 28 * text_scale; height: 28 * text_scale; radius: 4; bg-hover: wash-hover;
+                fg: text-secondary; shrink: 0; on-click: $action;
+    Icon #x { icon: Dismiss; icon-size: 12 * text_scale; fg: text-secondary; shown: !$asking; }
+    Text #ask { text: @row.ask; type: body; fg: text-primary; shown: $asking; }
+  }
+}
+
+// A line of words in a flyout: no icon, not pressable, read as text (not a disabled row).
+component MenuLine(text) {
+  Row #item .menu-item { width: 100%; hit: false; bg-hover: none;
+    Box { width: 16 * text_scale; shrink: 0; }
+    Text #label { text: $text; type: body; fg: text-secondary; grow: 1; shrink: 1; min-width: 0; }
+  }
+}
+
+// A QR code to scan, along its column as `justify` says (the app sets its picture).
+component QrCode(justify) {
+  Row #row { width: 100%; justify: $justify; margin: 8 0; shrink: 0;
+    Box #image { width: 168 * text_scale; height: 168 * text_scale; radius: 4; }
+  }
+}
+
+// A single-line text box with its hint (a connection form's field); its events name `action`.
+component TextBox(hint, action) {
+  Edit #edit { width: 100%; height: 30 * text_scale; margin: 5 * text_scale, 0; padding: 0, 8 * text_scale; radius: 4; bg: bar-empty;
+               fg: text-primary; type: body; hint: $hint; on-edit: $action; shrink: 0; }
+}
+
+// The row a flyout opens a second flyout from: a chevron at its end (WinUI's sub-item).
+component MenuChevron() {
+  Icon #chevron { icon: ChevronRight; icon-size: 12 * text_scale; fg: text-secondary; shrink: 0; }
+}
+
+// ---- the window -----------------------------------------------------------------------------
+
+Stack #root { width: 100%; height: 100%; bg: #202020;
+  Custom #field { left: 0; top: 0; right: 0; bottom: 0; }
+
+  // The face: everything of the playback page over the backdrop. The settings page takes its
+  // place over the same backdrop (#field), so the face hides while it is up.
+  Stack #face { left: 0; top: 0; right: 0; bottom: 0;
+    // The artwork (4.1, 4.9): held a little smaller while the sound is.
+    Image #cover { left: area_mid - art / 2; top: block_y; width: art; height: art; radius: radius-overlay;
+                   shadow: shadow-dialog; hit: true; hover-events: true; opacity: strength; shown: shows_art;
+      Icon #note { icon: MusicNote1; icon-size: art * 0.3; fg: text-tertiary; left: 0; top: 0; right: 0; bottom: 0; }
+    }
+
+    // The file's words about itself (4.7). Two blocks: a song change dissolves the one that was
+    // up into the new song's (b7b33f5 sound_backdrop.rs: linear, the theme switch's 267 ms, on the
+    // artwork's clock when the artwork changes too), each laid out at its own lines.
+    Box #words-block { left: area_mid - col_w / 2; top: words_y; width: col_w; height: words_h; opacity: strength;
+      Column #words-a { position: absolute; left: 0; top: 0; width: 100%; align: center;
+        Text #title { live: true; text: $title; font-size: title_size; line: title_size * 36 / 28; weight: 700 - heading_lighten; lines: 2; text-align: center; width: 100%; fg: text-primary; }
+        Text #artist { text: $artist; font-size: subtitle_size; line: subtitle_size * 24 / 18; text-align: center; width: 100%; fg: text-secondary; margin-top: 4 * text_scale; }
+        Text #album { text: $album; type: body; text-align: center; width: 100%; fg: text-tertiary; margin-top: 4 * text_scale; }
+        Row #res-line .res-line {
+          Text #res .res { text: $res; }
+          Text #res-note .res-note { text: $res-note; }
+        }
+      }
+      Column #words-b { position: absolute; left: 0; top: 0; width: 100%; align: center; opacity: 0;
+        Text #title-b { live: true; text: $title-b; font-size: title_size; line: title_size * 36 / 28; weight: 700 - heading_lighten; lines: 2; text-align: center; width: 100%; fg: text-primary; }
+        Text #artist-b { text: $artist-b; font-size: subtitle_size; line: subtitle_size * 24 / 18; text-align: center; width: 100%; fg: text-secondary; margin-top: 4 * text_scale; }
+        Text #album-b { text: $album-b; type: body; text-align: center; width: 100%; fg: text-tertiary; margin-top: 4 * text_scale; }
+        Row #res-line-b .res-line {
+          Text #res-b .res { text: $res-b; }
+          Text #res-note-b .res-note { text: $res-note-b; }
+        }
+      }
+    }
+
+    // The transport (6.1): the info row, the progress row, the buttons.
+    Column #controls { left: area_mid - ctl_w / 2; top: ctl_y; width: ctl_w; height: ctl_h; gap: 8 * chrome_scale;
+      Row #top-row { width: 100%; height: 24 * chrome_scale; justify: end; shown: $has-top-row;
+        Text #asio { text: "ASIO"; font-size: 12 * caption_scale; line: 16 * caption_scale; fg: text-secondary; shown: $asio; }
+        Spacer;
+        // b7b33f5 sound_controls.rs: the row's own button (32 × c, floor 28) centred on the 24-dip
+        // top row, over the queue button's column; it reaches past the row above and below.
+        Button #info .ctl { width: btn; height: btn; margin: (24 * chrome_scale - btn) / 2, 0; shrink: 0; icon: MusicInfoFilled; on-click: toggle-info; label: @a11y.info; }
+      }
+      Row #scrub { width: 100%; height: 20 * chrome_scale; gap: 8 * chrome_scale;
+        Text #elapsed { text: $elapsed; font-size: 12 * caption_scale; line: 16 * caption_scale; fg: text-secondary; width: 44 * chrome_scale; shrink: 0; }
+        Box #track { grow: 1; height: 20 * chrome_scale; drag-events: true; hit: true; cursor: hand; justify: center; label: @a11y.seek;
+          // While a song opens: WinUI's indeterminate ProgressBar, a segment sweeping the bar.
+          Box #track-bar { width: 100%; height: 8 * chrome_scale; radius: 4 * chrome_scale; bg: bar-empty; clip: true;
+            Box #track-sweep { left: 0; top: 0; width: 0; height: 8 * chrome_scale; radius: 4 * chrome_scale; bg: bar-fill; shown: false; }
+          }
+          Box #track-fill { left: 0; top: 6 * chrome_scale; width: 8; height: 8 * chrome_scale; radius: 4 * chrome_scale; bg: bar-fill; }
+        }
+        Text #remaining { text: $remaining; font-size: 12 * caption_scale; line: 16 * caption_scale; fg: text-secondary; width: 52 * chrome_scale; text-align: end; shrink: 0; }
+      }
+      Stack #buttons { width: 100%; height: 40 * chrome_scale;
+        Row #center { left: 0; right: 0; top: 0; bottom: 0; justify: center; gap: ctl_gap;
+          Button #prev .ctl { width: btn; height: btn; icon: PreviousFilled; icon-size: 22 * chrome_scale * control_squeeze; on-click: prev; label: @a11y.prev; }
+          Button #play .ctl { width: big; height: big; icon: PlayFilled; icon-size: 24 * chrome_scale * control_squeeze; on-click: play-pause; }
+          Button #next .ctl { width: btn; height: btn; icon: NextFilled; icon-size: 22 * chrome_scale * control_squeeze; on-click: next; label: @a11y.next; }
+        }
+        Row #right { right: 0; top: (40 * chrome_scale - btn) / 2; height: btn; gap: right_gap;
+          // Hover events: its right press (a new shuffle) reaches it.
+          Button #order .ctl { width: btn; height: btn; icon: ArrowRepeatAllFilled; icon-size: 18 * chrome_scale * control_squeeze; on-click: order;
+                               hover-events: true; }
+          // Apple Music's lyrics mark: the filled bubble with a quote knocked out of its body (20).
+          Button #words .ctl { width: btn; height: btn; icon: CommentBubbleFilled; icon-size: 20 * chrome_scale * control_squeeze; icon-cut: TextQuote 80; on-click: toggle-lyrics; label: @a11y.lyrics; }
+          Button #queue .ctl { width: btn; height: btn; icon: TextBulletListFilled; icon-size: 18 * chrome_scale * control_squeeze; on-click: toggle-queue; label: @a11y.queue; }
+        }
+      }
+      // The volume, at the button row's left. 6.5 / 6.6: press mutes; the secondary press opens
+      // the output flyout.
+      Row #left { position: absolute; left: 0; top: ctl_h - 40 * chrome_scale + (40 * chrome_scale - btn) / 2; height: btn; gap: gain_gap; align: center;
+        Button #vol .ctl { width: btn; height: btn; icon: Speaker2Filled; icon-size: 18 * chrome_scale * control_squeeze; on-click: mute;
+                           wheel-events: true; }
+        Box #gain { width: gain_w; height: 20 * chrome_scale; drag-events: true; wheel-events: true; shrink: 0; label: @a11y.volume;
+                    hit: true; cursor: hand; justify: center; shown: gain_on;
+          Box #gain-bar { width: 100%; height: 6 * chrome_scale; radius: 3 * chrome_scale; bg: bar-empty; }
+          Box #gain-fill { left: 0; top: 7 * chrome_scale; width: 96; height: 6 * chrome_scale; radius: 3 * chrome_scale; bg: bar-fill; }
+        }
+      }
+    }
+
+    // 4.10: the way into a folded side panel, beside the artwork, level with its middle.
+    Button #way-in .ctl { icon: CaretRightFilled; icon-size: 16 * chrome_scale; width: 32 * chrome_scale; height: 32 * chrome_scale;
+                          left: area_mid + art / 2 + 16 * chrome_scale; top: block_y + art / 2 - 16 * chrome_scale; opacity: 0;
+                          shown: shows_art; on-click: expand-panel; layer: true; label: @a11y.expand; }
+
+    // The side panel (7.3, 8.x, 11.x): the queue, the lyrics, the song's info.
+    Stack #side-panel { left: panel_x; top: safe_y; width: panel_w; height: panel_h;
+      Column #queue-pane { left: 0; top: 0; right: 0; bottom: 0; layer: true; opacity: 0;
+        Row #q-head { width: 100%; height: 40 * text_scale; gap: 16 * text_scale; align: start;
+          Row #pl-heading { height: 36 * text_scale; padding: 0, 8 * text_scale; margin-left: -8 * text_scale; gap: 8 * text_scale; radius: radius-control;
+                            bg-hover: wash-hover; bg-press: wash-press; hit: true; cursor: hand; on-click: playlist-menu;
+                            shrink: 1; min-width: min(140 * text_scale, 0.45 * panel_w);
+            Text #pl-name { text: $list-name; font-size: heading_size; line: heading_size * 28 / 20; weight: 700 - heading_lighten; fg: text-primary; shrink: 1; }
+            Icon { icon: ChevronDown; icon-size: 12 * text_scale; fg: text-primary; }
+          }
+          Spacer;
+          // 8.8: 0.4 of the side panel between 160 (chrome) and 240 (text), 32 tall, its words 10 in.
+          // No TextBox chrome in any state. Hover does not change the plate; focus removes it.
+          Stack #search-box { width: clamp(0.4 * panel_w, 160 * chrome_scale, 240 * text_scale); height: 32 * chrome_scale; shrink: 4; min-width: 72 * chrome_scale;
+            Box #search-luminosity { left: 0; top: 0; right: 0; bottom: 0; radius: radius-control * chrome_scale;
+                                     bg: search-luminosity; shown: !$search-focused; }
+            Box #search-tint { left: 0; top: 0; right: 0; bottom: 0; radius: radius-control * chrome_scale;
+                              bg: search-tint; shown: !$search-focused; }
+            Edit #search { left: 0; top: 0; right: 0; bottom: 0; padding: 0, ($search-clearable ? 34 : 10) * chrome_scale, 0, 10 * chrome_scale; radius: radius-control * chrome_scale;
+                           type: body; fg: text-primary; hint: @search.hint; on-edit: search;
+              // This action belongs to the editor's focus scope; a press must not hide it before Up.
+              Button #search-clear .ctl { right: 2 * chrome_scale; top: 2 * chrome_scale; width: 28 * chrome_scale; height: 28 * chrome_scale; icon: Dismiss;
+                                          icon-size: 12 * chrome_scale; fg: text-secondary; shown: $search-clearable; on-click: clear-search; label: @a11y.clear; }
+            }
+          }
+          // Beside the search, the face's control buttons: locate the playing song, and the
+          // WinUI List button whose menu sorts the queue.
+          Row #q-tools { height: 32 * chrome_scale; gap: 4 * chrome_scale; shrink: 0; margin-left: -12 * text_scale;
+            Button #q-locate .ctl { width: 32 * chrome_scale; height: 32 * chrome_scale; icon: LocateRegular; icon-size: 16 * chrome_scale; on-click: locate; label: @a11y.locate; }
+            Button #q-sort .ctl { width: 32 * chrome_scale; height: 32 * chrome_scale; icon: ListFilled; icon-size: 16 * chrome_scale; on-click: sort-menu; label: @a11y.sort; }
+          }
+        }
+        Text #q-caption { text: $queue-caption; type: body; fg: text-secondary; width: 100%; margin-top: 2 * text_scale; }
+        Box #q-list { role: list; label: @a11y.queue; width: panel_w + 8 * text_scale; margin-left: -8 * text_scale; grow: 1; margin-top: 14 * text_scale; clip: true; wheel-events: true;
+                hover-events: true; }
+        Column #q-empty { width: 100%; grow: 1; align: center; justify: center; gap: 16; shown: false;
+          Text { text: @queue.empty; type: body; fg: text-secondary; }
+          Row { gap: 8;
+            Button .text-btn { text: @queue.add-files; on-click: add-files; }
+            Button .text-btn { text: @queue.add-folder; on-click: add-folder; }
+          }
+        }
+      }
+      Box #lyrics-pane { left: 0; top: 0; right: 0; bottom: 0; layer: true; opacity: 0; clip: true; wheel-events: true;
+        Column #lyrics { left: 0; top: 0; right: 0; }
+      }
+      // The rows stand in the middle of the side panel's height when they fit, and scroll when not.
+      // In one column they stand in the middle of its width too, as the lyrics do.
+      Column #info-pane { left: 0; top: 0; right: 0; bottom: 0; layer: true; opacity: 0; clip: true; wheel-events: true;
+                          justify: center; align: two ? start : center;
+        Column #info-rows { width: 100%; max-width: 520 * text_scale; shrink: 0;
+          Text { text: @info.title; font-size: heading_size; line: heading_size * 28 / 20; weight: 600 - heading_lighten; fg: text-primary; }
+        }
+      }
+    }
+    // The side panel's way back from a second-level page: in the gap left of it, level with its middle.
+    // Window-edge overlays: outside pane textures and list/lyric clipping/fade masks.
+    Box #queue-rail { role: none; focusable: false; right: rail_inset; top: safe_y + queue_head_h; width: rail_width; height: queue_view_h;
+                      hit: true; drag-events: true; hover-events: true; wheel-events: true; opacity: 0;
+      Box #queue-rail-track { position: absolute; right: 0; top: 0; bg: rail-track; }
+      Box #queue-rail-thumb { position: absolute; left: 0; top: 0; bg: rail-thumb; }
+    }
+    Box #lyrics-rail { role: none; focusable: false; right: rail_inset; top: safe_y; width: rail_width; height: panel_h;
+                       hit: true; drag-events: true; hover-events: true; wheel-events: true; opacity: 0;
+      Box #lyrics-rail-track { position: absolute; right: 0; top: 0; bg: rail-track; }
+      Box #lyrics-rail-thumb { position: absolute; left: 0; top: 0; bg: rail-thumb; }
+    }
+    // Plugins' controls for the lyrics page (docs/extensions.md, slot `lyrics-tools`): its foot, at
+    // its right; in two columns level with the transport's buttons. The player's lyrics layer
+    // buttons stand first; plugins mount controls after them while their conditions hold.
+    Row #slot-lyrics-tools { position: absolute; right: window.w - panel_x - panel_w; top: tools_y; height: btn; gap: 4 * chrome_scale;
+                             layer: true; align: center;
+      // The lyrics layers the song's lyrics carry: shown on the lyrics page, lit while on.
+      // Romanisation: a Latin A under a macron (Hepburn's long vowel).
+      Button #layer-roma .ctl { width: btn; height: btn; shown: false; on-click: "layer:roma"; label: @a11y.roma;
+        Path { view: 24; icon-size: 18 * chrome_scale; fg: text-primary;
+               d: "M7.5 2.5H16.5V4H7.5Z M11.25 6.5H12.75L18.5 21H16.85L15.35 17H8.65L7.15 21H5.5ZM9.25 15.5H14.75L12 8.4Z"; }
+      }
+      // Translation: 文 over A.
+      Button #layer-trans .ctl { width: btn; height: btn; shown: false; on-click: "layer:trans"; label: @a11y.trans;
+        Path { view: 24; icon-size: 18 * chrome_scale; fg: text-primary;
+               d: "M5.25 2.5H6.75V4H11V5.5H9.1C8.75 7.1 8.05 8.5 7.05 9.65C8.15 10.55 9.5 11.2 11 11.55L10.6 13C8.9 12.55 7.35 11.8 6.05 10.7C4.75 11.8 3.2 12.55 1.45 13L1 11.55C2.55 11.2 3.9 10.55 5 9.65C4 8.5 3.3 7.1 2.95 5.5H1V4H5.25ZM4.5 5.5C4.8 6.65 5.35 7.7 6.05 8.55C6.75 7.7 7.3 6.65 7.6 5.5Z M15.25 9H16.75L22 21.5H20.35L18.95 18H13.05L11.65 21.5H10ZM13.65 16.5H18.35L16 10.85Z"; }
+      }
+    }
+
+    Button #panel-back .ctl { icon: CaretLeftFilled; icon-size: 16 * chrome_scale; width: 32 * chrome_scale; height: 32 * chrome_scale;
+                             left: panel_x - 40 * chrome_scale - 16 * chrome_scale; top: safe_y + panel_h / 2 - 16 * chrome_scale; opacity: 0; shown: false;
+                             on-click: page-back; label: @a11y.back; }
+  }
+
+  // The settings page (novaplayer-spec.md, "Settings page"): in the face's place, on the same
+  // backdrop, under the title bar, whose menu button turns into its back button. Written in the
+  // song info page's manner (11.x): plain words on the backdrop, no cards; a centred column at
+  // the page's text factor, groups 28 apart, each under its heading. The app scrolls
+  // #settings-body (views/settings_page.rs).
+  // Not a layer: its cards' material reads the field drawn under it, which a layer's own surface
+  // would not hold (it fades element by element).
+  Box #settings-page { left: 0; top: titlebar-height; right: 0; bottom: 0; visible: false; opacity: 0;
+                       clip: true; hit: true; wheel-events: true;
+    Column #settings-body { position: absolute; left: 0; top: 0; right: 0; align: center; padding: 0, 0, 36 * text_scale, 0;
+      Column { width: 100%; max-width: 1000 * text_scale + 72 * text_scale; padding: 0, 36 * text_scale; gap: 4 * text_scale; shrink: 0;
+        // The title is a breadcrumb (settings_page.rs builds its segments: Crumb, CrumbHere).
+        Row #settings-crumbs { width: 100%; height: 36 * text_scale; gap: 8 * text_scale; align: center; shrink: 0;
+                               margin: 20 * text_scale, 0, 4 * text_scale, 0; }
+        // The first level, as written here; a deeper one is built into #settings-level.
+        Column #settings-root { width: 100%; gap: 4 * text_scale; shrink: 0;
+        SettingsHeading(@settings.look) #look;
+        SettingsCard(TextFont, @font.title, @font.desc) #font {
+          ComboBox("drop:font", "drop-typed:font", @font.find) #font-drop;
+        }
+        SettingsCard(PanelRightExpand, @layout.title, @layout.desc) #layout {
+          Dropdown("drop:layout") #layout-drop;
+        }
+        // Installed lyric styles (app::lyric_styles): chosen here, installed and deleted here.
+        SettingsCard(ClosedCaption, @lyric-style.title, @lyric-style.desc) #lyric-style {
+          CardButton(@lyric-style.delete, "lyric-style-delete") #lyric-style-del { shown: $lyric-style-installed; }
+          CardButton(@lyric-style.install, "lyric-style-install") #lyric-style-add;
+          Dropdown("drop:lyric-style") #lyric-style-drop;
+        }
+        SettingsCard(LocalLanguage, @locale.title, @locale.desc) #locale {
+          Dropdown("drop:locale") #locale-drop;
+        }
+        // Tab moves the keyboard focus (NovaUI's keyboard navigation): off unless chosen; off, Tab is the side panel's.
+        SettingsCard(Keyboard, @keyboard-navigation.title, @keyboard-navigation.desc) #keyboard-navigation {
+          Dropdown("drop:keyboard-navigation") #keyboard-navigation-drop;
+        }
+        // Screen readers (Narrator, NVDA, Orca) reach the window: off unless chosen, from the next start.
+        SettingsCard(Eye, @screen-reader.title, @screen-reader.desc) #screen-reader {
+          Dropdown("drop:screen-reader") #screen-reader-drop;
+        }
+        SettingsHeading(@settings.playback) #playback;
+        // Songs played at the loudness their tags state (player-core's ReplayGain).
+        SettingsCard(Speaker1, @replay-gain.title, @replay-gain.desc) #replay-gain {
+          Dropdown("drop:replay-gain") #replay-gain-drop;
+        }
+        // One song fading into the next (Player::hand_next; a manual skip fades shorter).
+        SettingsCard(Next, @crossfade.title, @crossfade.desc) #crossfade {
+          Dropdown("drop:crossfade") #crossfade-drop;
+        }
+        // The CLAP effects the sound plays through (playback::effects).
+        SettingsNav(Speaker2, @effects.title, $effects-desc, "settings:effects") #effects-nav;
+        SettingsHeading(@plugins.title) #plugins;
+        SettingsNav(Grid, @plugins.title, $plugins-desc, "settings:plugins") #plugins-nav;
+        SettingsHeading(@settings.about) #about;
+        SettingsCard(MusicNote2, @about.app, @about.app.desc) #app {
+          Text { text: $about-version; type: body; fg: text-secondary; shrink: 0; }
+        }
+        SettingsCard(Speaker2, @about.core, @about.core.desc) #core {
+          Text { text: $about-core; type: body; fg: text-secondary; shrink: 0; }
+        }
+        // What the Windows build ships under its own terms (README, "Licence").
+        SettingsCard(MusicNote1, @about.tak, @about.tak.desc) #tak { shown: $about-tak; }
+        SettingsCard(Speaker1, @about.asio, @about.asio.desc) #asio { shown: $about-asio; }
+        SettingsCard(TextQuote, @about.fonts, @about.fonts.desc) #fonts;
+        }
+        // Its cards start below the title as the first level's first heading does (Windows'
+        // settings: a page's content stands clear of its title).
+        Column #settings-level { width: 100%; gap: 4 * text_scale; shrink: 0; shown: false; margin-top: 20 * text_scale; }
+      }
+    }
+  }
+
+  // Title bar: the menu button (GlobalNavButton) in the leading slot, the caption buttons at
+  // the other end (2.4). The app menu's last row opens the settings page.
+  Row #titlebar { left: 0; top: 0; right: 0; height: titlebar-height;
+    Button #app-menu .caption-btn { icon: Navigation; on-click: app-menu; label: @a11y.menu; }
+    Spacer;
+    // The system's caption buttons are no Tab stops (Windows' own are not: Alt+Space, Alt+F4); a
+    // screen reader still names and presses them.
+    Button #min .caption-btn { icon: CaptionMinimize; on-click: minimize; label: @a11y.minimize; focusable: false; }
+    Button #max .caption-btn { icon: CaptionMaximize; on-click: maximize; focusable: false; }
+    Button #close .caption-btn { icon: CaptionClose; bg-hover: caption-close-hover; bg-press: caption-close-press; on-click: close; label: @a11y.close; focusable: false; }
+  }
+
+  // The import dialog (docs/plugins.md §user_lists): WinUI's ContentDialog — a smoke layer
+  // (#99000000) and a centred card holding the account's playlists to pick. The app fills the
+  // rows and sets the list's height and the card's top.
+  Box #import-veil { left: 0; top: 0; right: 0; bottom: 0; shown: false; layer: true; bg: #99000000; hit: true; }
+  Column #import-dialog { position: absolute; left: dlg_x; top: 96; width: dlg_w; shown: false; layer: true;
+                          bg: flyout-fill; border: 1 stroke-flyout; radius: radius-overlay; shadow: shadow-dialog;
+                          padding: 24 * text_scale; gap: 12 * text_scale; hit: true;
+    Row { width: 100%; height: 28 * text_scale; align: center;
+      Text { text: $import-title; type: subtitle; fg: text-primary; grow: 1; shrink: 1; min-width: 0; }
+      Text { text: $import-count; type: body; fg: text-secondary; shrink: 0; }
+    }
+    Box #import-list { width: 100%; height: 0; clip: true; wheel-events: true;
+      Column #import-list-rows { position: absolute; left: 0; top: 0; width: 100%; }
+    }
+    Row { width: 100%; height: 32 * text_scale; gap: 8 * text_scale; align: center;
+      Row #import-all .check-row { height: 32 * text_scale; padding: 0, 8 * text_scale; on-click: import-all;
+        CheckBox($import-all) #import-all-check;
+        Text { text: @import.all; type: body; fg: text-primary; }
+      }
+      Spacer;
+      Button #import-cancel .text-btn { text: @import.cancel; on-click: import-cancel; }
+      Button #import-ok .accent-btn { text: @import.ok; on-click: import-ok; }
+    }
+  }
+
+  // A flyout that scrolls (taller than MENU_MAX_H or its room) carries the queue's rail at its
+  // right edge, over its padding: each rail follows its flyout, still while the rows scroll.
+  // Every flyout (menus::Kind), one at a time; its width is the kind's (menus.rs sets which).
+  Column #flyout .menu { width: flyout_w; max-height: 4 + 9.5 * flyout_row; left: 0; top: 0; }
+  Box #flyout-rail .menu-rail {
+    Box #flyout-rail-track { position: absolute; right: 0; top: 0; bg: rail-track; }
+    Box #flyout-rail-thumb { position: absolute; left: 0; top: 0; bg: rail-thumb; }
+  }
+  // A plugin's flyout: the second one, beside the app flyout.
+  Column #plugin-flyout .menu { width: flyout_w; max-height: 4 + 9.5 * flyout_row; left: 0; top: 0; }
+  Box #plugin-flyout-rail .menu-rail {
+    Box #plugin-flyout-rail-track { position: absolute; right: 0; top: 0; bg: rail-track; }
+    Box #plugin-flyout-rail-thumb { position: absolute; left: 0; top: 0; bg: rail-thumb; }
+  }
+  // The volume while the wheel turns it: its number over the volume button.
+  Column #vol-tip { position: absolute; left: 0; top: 0; shown: false; layer: true; bg: #E62C2C2C; radius: radius-control;
+                    padding: 4 8; border: 1 stroke-flyout; shadow: shadow-flyout;
+    Text #vol-tip-text { text: $vol-tip; font-size: 12 * caption_scale; line: 16 * caption_scale; fg: text-primary; }
+  }
+  // Centred above the bottom edge by the layout itself: placing it from last frame's size put a
+  // new message off centre for a frame.
+  Column #toast-dock { position: absolute; left: 0; right: 0; bottom: 32; align: center;
+  Column #toast { shown: false; layer: true; bg: #E62C2C2C; radius: radius-overlay;
+                  padding: 8 12; border: 1 stroke-flyout; shadow: shadow-flyout;
+    Text #toast-text { text: $toast; type: body; fg: text-primary; }
+  }
+  }
+}
