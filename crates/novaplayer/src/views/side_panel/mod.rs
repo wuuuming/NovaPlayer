@@ -68,6 +68,15 @@ pub enum Page {
     Lyrics,
 }
 
+/// What the queue's rows are of: the list's version, its order's version and the narrowing.
+pub type Listed = (u64, u64, Option<Narrow>);
+
+/// A search's result, landed from its worker (`SidePanel::found`).
+pub struct Found {
+    pub of: Listed,
+    pub positions: Vec<usize>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Narrow {
     pub text: String,
@@ -79,6 +88,12 @@ impl Narrow {
     /// It is a search: words only, no artist or album.
     pub fn is_search(&self) -> bool {
         self.artist.is_none() && self.album.is_none()
+    }
+
+    /// Something is typed: the rows are ranked by how well it is found (`Queue::filter`), not in
+    /// play order, so they cannot be dragged into another place.
+    pub fn ranked(&self) -> bool {
+        !self.text.trim().is_empty()
     }
 }
 
@@ -174,7 +189,12 @@ pub struct SidePanel {
     version: u64,
     /// Shared so a present holds it without copying 20 000 entries.
     positions: std::rc::Rc<Vec<usize>>,
-    positions_key: (u64, u64, Option<Narrow>),
+    /// What `positions` are of: the list's version and order version, and the narrowing.
+    positions_key: Listed,
+    /// A search running on a worker for the narrowing typed (`queue::filter`), and what it is
+    /// for; dropped (and so called off) when another is typed. The rows shown stay until it
+    /// lands (`found`).
+    searching: Option<(Listed, novaui::Task)>,
     pub scroll: f32,
     target: f32,
     /// The row pitch and list height the scroll was last laid out at: a resize keeps the same
@@ -283,6 +303,7 @@ impl SidePanel {
             version: Default::default(),
             positions: Default::default(),
             positions_key: Default::default(),
+            searching: None,
             scroll: Default::default(),
             target: Default::default(),
             last_rh: Default::default(),

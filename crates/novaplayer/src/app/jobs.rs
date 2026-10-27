@@ -145,6 +145,8 @@ pub enum Job {
         unavailable: usize,
     },
     LinkFailed(String, String),
+    /// The queue's search, ranked on a worker.
+    Found(crate::views::side_panel::Found),
     /// A plugin command's answer: a toast to show, and whether the song's face is to be asked again.
     /// `path`: the song the command was given for; `song`: the open song's version then.
     PluginCommandDone {
@@ -345,6 +347,7 @@ impl Player {
                     self.now_playing.cover_editable = cover_editable;
                     self.apply_now_playing(tags, Art::Now(cover), lyrics, Default::default());
                 }
+                Job::Found(found) => self.side_panel.found(found),
                 Job::OnlineCover { path, cover } => {
                     if cover.is_some() {
                         self.forget_row_thumbs(&path);

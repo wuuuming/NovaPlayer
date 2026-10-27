@@ -470,25 +470,44 @@ impl Queue {
         List { name: name.to_owned(), origin: Origin::Made, ..Default::default() }
     }
 
-    /// Positions (in play order) whose song matches every word of `room` (title/artist/album), or
-    /// the given artist/album exactly.
+    /// Positions of the songs of the given artist / album (exactly) where every word of `q` is
+    /// found in the title, artist or album (`Query`): the best found first, each rank in play
+    /// order.
     pub fn filter(&self, q: &str, artist: Option<&str>, album: Option<&str>) -> Vec<usize> {
-        let q = crate::app::query::Query::new(q);
-        let mut out = Vec::new();
-        for (p, &i) in self.list.order.iter().enumerate() {
-            let s = &self.list.songs[i];
-            if artist.is_some_and(|a| s.tags.artist.as_deref() != Some(a))
-                || album.is_some_and(|a| s.tags.album.as_deref() != Some(a))
-            {
-                continue;
-            }
-            if !q.matches([Some(s.title()), s.tags.artist.as_deref(), s.tags.album.as_deref()].into_iter().flatten()) {
-                continue;
-            }
-            out.push(p);
-        }
-        out
+        filter(&self.list.songs, &self.list.order, q, artist, album, &|| false)
     }
+}
+
+/// `Queue::filter` over `songs` in play order `order`, on any thread (a search over a long list
+/// runs on a worker). `stop` is asked now and then: true gives up, with what was found so far.
+pub fn filter(
+    songs: &[std::sync::Arc<Song>],
+    order: &[usize],
+    q: &str,
+    artist: Option<&str>,
+    album: Option<&str>,
+    stop: &dyn Fn() -> bool,
+) -> Vec<usize> {
+    let q = crate::app::query::Query::new(q);
+    let mut out = Vec::new();
+    for (p, &i) in order.iter().enumerate() {
+        if p % 1024 == 1023 && stop() {
+            break;
+        }
+        let Some(s) = songs.get(i) else { continue };
+        if artist.is_some_and(|a| s.tags.artist.as_deref() != Some(a))
+            || album.is_some_and(|a| s.tags.album.as_deref() != Some(a))
+        {
+            continue;
+        }
+        let names = [Some(s.title()), s.tags.artist.as_deref(), s.tags.album.as_deref()];
+        if let Some(found) = q.find(names.into_iter().flatten()) {
+            out.push((found, p));
+        }
+    }
+    // Stable: play order within a rank.
+    out.sort_by_key(|f| f.0);
+    out.into_iter().map(|f| f.1).collect()
 }
 
 /// Which of `len` songs a play order holds, by song index: one look at each of its entries.

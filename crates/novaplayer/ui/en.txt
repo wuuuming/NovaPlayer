@@ -121,6 +121,8 @@ about.asio = ASIO
 about.asio.desc = ASIO is a technology and trademark of Steinberg Media Technologies GmbH. This build includes the ASIO SDK and is distributed under GPL-3.0
 about.fonts = Fonts
 about.fonts.desc = Noto Sans, SIL Open Font License 1.1
+about.readings = Search by reading
+about.readings.desc = Pinyin, jyutping and Japanese readings from the Unicode Han Database (Unihan) © Unicode, Inc., Unicode License v3
 
 # The queue's sort flyout (`sort.<Sort::key>`).
 sort.added = Date added

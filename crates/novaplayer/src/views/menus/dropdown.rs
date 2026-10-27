@@ -42,14 +42,18 @@ fn name_kept(ui: &mut Ui, doc: &mut Doc, key: &str, value: Option<&str>) {
     }
 }
 
-/// The list of the dropdown `key`: its choices whose names hold every word of `query` (all of
-/// them for an empty one), the kept one checked. Typing in its box opens it narrowed.
+/// The list of the dropdown `key`: its choices where every word of `query` is found in a name
+/// (all of them for an empty one), the best found first (`Query`), the kept one checked. Typing
+/// in its box opens it narrowed.
 pub fn open(v: &mut Views, ui: &mut Ui, m: &Models, key: &str, query: &str) {
     let Some(s) = setting(key) else { return };
     let all = (s.choices)(ui);
     let current = standing(&all, m.settings.get(key)).map_or(String::new(), |c| c.value.clone());
     let q = crate::app::query::Query::new(query);
-    let listed: Vec<_> = all.iter().filter(|c| q.matches(c.names.iter().map(String::as_str))).collect();
+    let mut found: Vec<_> =
+        all.iter().filter_map(|c| q.find(c.names.iter().map(String::as_str)).map(|f| (f, c))).collect();
+    found.sort_by_key(|f| f.0);
+    let listed: Vec<_> = found.into_iter().map(|f| f.1).collect();
     let rows: Vec<(Command, String)> = listed
         .iter()
         .map(|c| (Command::Set { key: key.to_owned(), value: c.value.clone() }, c.label.clone()))
@@ -88,6 +92,10 @@ pub fn present_boxes(v: &mut Views, ui: &mut Ui) {
         let key = s.key;
         let Some(e) = v.doc.get(&format!("{key}-drop.value")).filter(|e| ui.text_edit(*e).is_some()) else { continue };
         let plate = ui.focus() != Some(e);
+        if !plate {
+            // Typing in it looks names up here, on the UI thread.
+            crate::app::query::warm();
+        }
         for n in ["lum", "tint"] {
             let id = v.doc.id(&format!("{key}-drop.{n}"));
             if ui.tree.el(id).visual().visible != plate {

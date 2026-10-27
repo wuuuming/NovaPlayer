@@ -5,16 +5,50 @@ use crate::sync::Locked;
 impl SidePanel {
     // ---- queue ----------------------------------------------------------------------------
 
-    pub(super) fn positions(&mut self, q: &Queue) -> &std::rc::Rc<Vec<usize>> {
-        let key = (q.version, q.order_version, self.narrow.clone());
-        if self.positions_key != key {
-            self.positions = std::rc::Rc::new(match &self.narrow {
-                None => (0..q.len()).collect(),
-                Some(n) => q.filter(&n.text, n.artist.as_deref(), n.album.as_deref()),
-            });
-            self.positions_key = key;
+    /// The play positions the rows show. Typed words are looked for on a worker (a long list
+    /// takes longer than a turn): until the ranking lands the rows shown stay.
+    pub(super) fn positions(&mut self, ui: &mut Ui, q: &Queue) -> &std::rc::Rc<Vec<usize>> {
+        let key: Listed = (q.version, q.order_version, self.narrow.clone());
+        if self.positions_key == key || self.searching.as_ref().is_some_and(|s| s.0 == key) {
+            return &self.positions;
+        }
+        self.searching = None;
+        let task = match &self.narrow {
+            Some(n) if n.ranked() => {
+                let (songs, order, n, of) = (q.list.songs.clone(), q.list.order.clone(), n.clone(), key.clone());
+                ui.spawn(
+                    novaui::Priority::Visible,
+                    move |cancel| {
+                        let stop = || cancel.cancelled();
+                        library::queue::filter(&songs, &order, &n.text, n.artist.as_deref(), n.album.as_deref(), &stop)
+                    },
+                    move |positions| crate::app::Landed(crate::app::Job::Found(Found { of, positions })),
+                )
+            }
+            _ => None,
+        };
+        match task {
+            Some(task) => self.searching = Some((key, task)),
+            // Nothing typed (the whole list, an artist, an album): an exact look, here. A search
+            // no worker took runs here too.
+            None => {
+                self.positions = std::rc::Rc::new(match &self.narrow {
+                    None => (0..q.len()).collect(),
+                    Some(n) => q.filter(&n.text, n.artist.as_deref(), n.album.as_deref()),
+                });
+                self.positions_key = key;
+            }
         }
         &self.positions
+    }
+
+    /// A search landed: its ranking is shown if it is still the one asked for.
+    pub fn found(&mut self, found: Found) {
+        if self.searching.as_ref().is_some_and(|s| s.0 == found.of) {
+            self.searching = None;
+            self.positions = std::rc::Rc::new(found.positions);
+            self.positions_key = found.of;
+        }
     }
 
     /// Every live row is written again (another list, or its songs changed under it).
@@ -40,8 +74,9 @@ impl SidePanel {
         // Heading and caption.
         let name = q.id.and_then(|id| store.entry(id)).map(|e| e.name.clone()).unwrap_or_else(|| q.list.name.clone());
         doc.set(ui, "list-name", if name.is_empty() { ui.t("list.default", &[]) } else { name });
-        let n_pos = self.positions(q).len();
-        let caption = match &self.narrow {
+        let n_pos = self.positions(ui, q).len();
+        // Of the rows shown: a search's count changes when its ranking lands.
+        let caption = match &self.positions_key.2 {
             None if q.is_empty() => String::new(),
             None if !self.shows_playing => ui.t("queue.count", &[("n", &q.len().to_string())]),
             None => ui.t("queue.at", &[("at", &(q.pos + 1).to_string()), ("n", &q.len().to_string())]),
@@ -78,7 +113,7 @@ impl SidePanel {
             return;
         }
         let (_, lh) = ui.tree.size(list);
-        let positions = self.positions(q).clone();
+        let positions = self.positions(ui, q).clone();
         let reach = (positions.len() as f32 * rh - lh).max(0.0);
         // A resize is not a scroll: the row at the top stays the row at the top. The pitch
         // scales with the window (the layout's text_scale), so the offset is carried in rows; the reach
@@ -101,7 +136,8 @@ impl SidePanel {
         // eases it to the same place even when it is in view already.
         let locate = std::mem::take(&mut self.locate);
         if (self.follow_current || locate || self.last_pos != q.pos) && lh > 0.0 {
-            if let Ok(place) = positions.binary_search(&q.pos) {
+            // Ranked rows are not in play order: the playing song is looked for, not bisected.
+            if let Some(place) = positions.iter().position(|&p| p == q.pos) {
                 let top = place as f32 * rh;
                 let shown_t = self.target.clamp(0.0, reach);
                 let t = if locate || top < shown_t || top + rh > shown_t + lh {
@@ -124,14 +160,16 @@ impl SidePanel {
         self.target = self.target.max(0.0);
         let goal = self.target.min(reach);
         // A new search or narrowing: the list is a different list, not a scroll of the old one.
-        if self.listed_narrow.as_ref() != Some(&self.narrow) {
+        // The narrowing the rows show (a search's lands a little after it is typed).
+        let shown = self.positions_key.2.clone();
+        if self.listed_narrow.as_ref() != Some(&shown) {
             if self.listed_narrow.is_some() {
                 self.scroll = goal;
                 self.target = goal;
                 self.glide.jump(goal);
                 self.easing = false;
 
-                let searching = self.narrow.as_ref().is_some_and(|n| !n.text.trim().is_empty() && n.is_search());
+                let searching = shown.as_ref().is_some_and(|n| n.ranked() && n.is_search());
 
                 ui.tree.stop(list, Prop::Y);
                 ui.tree.set_prop(list, Prop::Y, if searching { RISE_DIST * self.scale.text } else { 0.0 });
@@ -142,7 +180,7 @@ impl SidePanel {
 
                 self.clock.frame();
             }
-            self.listed_narrow = Some(self.narrow.clone());
+            self.listed_narrow = Some(shown);
         }
         let now = ui.now();
         self.due_thumb_retries(now);
@@ -238,6 +276,7 @@ impl SidePanel {
             self.row_version,
             live.iter().filter_map(|&(p, _)| positions.get(p).and_then(|&p| q.list.order.get(p))).copied().collect(),
         );
+        let ranked = self.positions_key.2.as_ref().is_some_and(Narrow::ranked);
         for (place, root) in live {
             let pos = positions[place];
             let Some(&idx) = q.list.order.get(pos) else { continue };
@@ -253,6 +292,7 @@ impl SidePanel {
             for &id in &[r.root, r.artist, r.album, r.remove, r.grip] {
                 ui.tree.set_tag(id, place as u64);
             }
+            ui.tree.set_layout(r.grip, |l| l.display = if ranked { Display::None } else { Display::Flex });
             if r.idx != idx {
                 r.idx = idx;
                 ui.tree.set_text(name, song.title());

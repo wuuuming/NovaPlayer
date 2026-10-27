@@ -103,8 +103,9 @@ in. How the app behaves is written down in [the spec](docs/novaplayer-spec.md), 
 ASIO, [Taffy](https://github.com/DioxusLabs/taffy) the layout, [HarfRust](https://github.com/harfbuzz/harfrust)
 the text shaping and [AccessKit](https://github.com/AccessKit/accesskit) the screen readers. The
 icons are Microsoft's [Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons),
-the text is set in [Noto](https://fonts.google.com/noto), and the controls follow
-[WinUI](https://github.com/microsoft/microsoft-ui-xaml).
+the text is set in [Noto](https://fonts.google.com/noto), the controls follow
+[WinUI](https://github.com/microsoft/microsoft-ui-xaml), and search finds songs by the readings of the
+[Unicode Han Database](https://www.unicode.org/reports/tr38/).
 
 ## Disclaimer
 
@@ -115,6 +116,7 @@ artists through official channels.
 ## License
 
 The code is yours under [Apache-2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT), whichever you prefer.
+Every build carries readings from the Unicode Han Database (© Unicode, Inc., Unicode License v3).
 The Windows download also carries FFmpeg (LGPL), the Noto fonts (OFL), the TAK decoder (free for
 non-commercial use, shipped unmodified) and Steinberg's ASIO SDK (GPL-3.0), which makes that zip
 as a whole GPL-3.0. A build without ASIO (`--no-default-features`) keeps the terms above. ASIO is
