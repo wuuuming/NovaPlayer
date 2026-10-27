@@ -21,7 +21,7 @@ through an ASIO interface, and looks at home on Windows 11, without a browser en
 It draws its window with [NovaUI](https://github.com/wuuuming/NovaUI) and plays through
 [Player-Core](https://github.com/wuuuming/Player-Core), both written for it.
 
-This is the first public release (0.0.1), so expect rough edges, and please
+This is an early release, so expect rough edges, and please
 [open an issue](https://github.com/wuuuming/NovaPlayer/issues) when you hit one.
 
 ## What it does

@@ -19,7 +19,7 @@ NovaPlayer 播放你手里已有的音乐文件，在封面旁边同步显示歌
 上看着不突兀，而且底下没有塞一个浏览器内核。窗口由 [NovaUI](https://github.com/wuuuming/NovaUI)
 绘制，声音走 [Player-Core](https://github.com/wuuuming/Player-Core)，这两个都是为它写的。
 
-这是第一个公开版本（0.0.1），难免有不顺手的地方，碰到了欢迎
+这还是早期版本，难免有不顺手的地方，碰到了欢迎
 [提 issue](https://github.com/wuuuming/NovaPlayer/issues)。
 
 ## 能做什么
