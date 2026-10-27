@@ -1,3 +1,4 @@
+pub mod desktop_lyrics;
 pub mod import_dialog;
 pub mod input;
 pub mod layout;

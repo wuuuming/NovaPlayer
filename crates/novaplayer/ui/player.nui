@@ -648,7 +648,10 @@ Stack #root { width: 100%; height: 100%; bg: #202020;
     // The transport (6.1): the info row, the progress row, the buttons.
     Column #controls { left: area_mid - ctl_w / 2; top: ctl_y; width: ctl_w; height: ctl_h; gap: 8 * chrome_scale;
       Row #top-row { width: 100%; height: 24 * chrome_scale; justify: end; shown: $has-top-row;
-        Text #asio { text: "ASIO"; font-size: 12 * caption_scale; line: 16 * caption_scale; fg: text-secondary; shown: $asio; }
+        // The desktop lyrics (views/desktop_lyrics.rs): over the elapsed time, as the info button
+        // stands over the remaining time; lit while they are up.
+        Button #desk .ctl { width: btn; height: btn; margin: (24 * chrome_scale - btn) / 2, 0; shrink: 0; icon: SlideText; on-click: desktop-lyrics; label: @a11y.desktop-lyrics; }
+        Text #asio { margin-left: 6 * chrome_scale; text: "ASIO"; font-size: 12 * caption_scale; line: 16 * caption_scale; fg: text-secondary; shown: $asio; }
         Spacer;
         // b7b33f5 sound_controls.rs: the row's own button (32 × c, floor 28) centred on the 24-dip
         // top row, over the queue button's column; it reaches past the row above and below.
@@ -839,6 +842,8 @@ Stack #root { width: 100%; height: 100%; bg: #202020;
         }
         // The CLAP effects the sound plays through (playback::effects).
         SettingsNav(Speaker2, @effects.title, $effects-desc, "settings:effects") #effects-nav;
+        // The lyrics on the desktop, over every window (views/desktop_lyrics.rs).
+        SettingsNav(SlideText, @desktop-lyrics.title, @desktop-lyrics.desc, "settings:desktop-lyrics") #desktop-lyrics-nav;
         SettingsHeading(@plugins.title) #plugins;
         SettingsNav(Grid, @plugins.title, $plugins-desc, "settings:plugins") #plugins-nav;
         SettingsHeading(@settings.about) #about;
@@ -853,6 +858,27 @@ Stack #root { width: 100%; height: 100%; bg: #202020;
         SettingsCard(Speaker1, @about.asio, @about.asio.desc) #asio { shown: $about-asio; }
         SettingsCard(TextQuote, @about.fonts, @about.fonts.desc) #fonts;
         SettingsCard(Search, @about.readings, @about.readings.desc) #readings;
+        }
+        // `设置 › 桌面歌词`: its choices, laid out here as the first level's are.
+        Column #settings-desktop-lyrics { width: 100%; gap: 4 * text_scale; shrink: 0; shown: false; margin-top: 20 * text_scale;
+          SettingsCard(SlideText, @desktop-lyrics.show, @desktop-lyrics.show.desc) #dl-show {
+            Dropdown("drop:desktop-lyrics") #desktop-lyrics-drop;
+          }
+          SettingsCard(LockClosed, @desktop-lyrics.lock, @desktop-lyrics.lock.desc) #dl-lock {
+            Dropdown("drop:desktop-lyrics-lock") #desktop-lyrics-lock-drop;
+          }
+          SettingsCard(FontIncrease, @desktop-lyrics.size, @desktop-lyrics.size.desc) #dl-size {
+            Dropdown("drop:desktop-lyrics-size") #desktop-lyrics-size-drop;
+          }
+          SettingsCard(TextFont, @desktop-lyrics.ink, @desktop-lyrics.ink.desc) #dl-ink {
+            Dropdown("drop:desktop-lyrics-ink") #desktop-lyrics-ink-drop;
+          }
+          SettingsCard(TextQuote, @desktop-lyrics.sung, @desktop-lyrics.sung.desc) #dl-sung {
+            Dropdown("drop:desktop-lyrics-sung") #desktop-lyrics-sung-drop;
+          }
+          SettingsCard(Eye, @desktop-lyrics.plate, @desktop-lyrics.plate.desc) #dl-plate {
+            Dropdown("drop:desktop-lyrics-plate") #desktop-lyrics-plate-drop;
+          }
         }
         // Its cards start below the title as the first level's first heading does (Windows'
         // settings: a page's content stands clear of its title).

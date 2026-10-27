@@ -53,6 +53,9 @@ pub enum Msg {
     Menus,
     /// The settings page: the crossfade with the face, its scroll's glide (frames).
     Settings,
+    /// The desktop lyrics' overlay pressed something, moved, or could not open
+    /// (`views::desktop_lyrics`).
+    DesktopLyrics,
 }
 
 /// What the system answered to a question the player asked it (`Ui::pick`,

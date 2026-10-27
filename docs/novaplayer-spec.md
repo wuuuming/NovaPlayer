@@ -97,6 +97,38 @@ the transport, the icons and the text scale by them. Text keeps its rank, not ju
 - Source order: container tag first (embedded lyrics), then the sidecar `<name>.lrc` beside a local file.
 - `current(pos)` = last group with at ≤ pos; `until_next(pos)` arms the next wake.
 
+## 3.1 Desktop lyrics (`views/desktop_lyrics.rs`, `ui/desktop-lyrics.nui`)
+
+The sung line over every window, in an overlay of its own (NovaUI's overlays: no frame, no
+taskbar entry, never takes the keyboard, transparent around its plate).
+
+- **On and off:** the button at the left of the row above the progress bar (over the elapsed
+  time; lit while they are up), and `设置 › 桌面歌词 › 显示桌面歌词`. Closing the player closes them.
+- **Lines:** the sung line, its sung part swept in the progress colour (by word where the lyrics
+  stamp words, else evenly to the next line); under it, the translation (else the romanisation)
+  when the song carries one and the lyrics page shows it (§3, layers), else the group's own second
+  line, else the next line (dimmer). Before the first line it stands unsung; without lyrics, the
+  title over the artist. A change of lines fades the old out and the new in (0.25 s).
+- **Look (LyricsX's desktop lyrics):** one plate fitting the lines, its corner radius half the font
+  size, padding a third of the size down and one size across, the lines a third of the size apart,
+  semibold, centred. The window is as large as the plate and grows and shrinks about its bottom
+  centre.
+- **Unlocked:** the plate drags it anywhere; where it was let go is kept. The pointer over it
+  shows a bar above the plate: 锁定, 上一首, 播放/暂停, 下一首, A−, A+ (the sizes offered, one
+  step), 关闭.
+- **Locked:** presses go through to what is under it; the pointer over it only fades it a little (to
+  70%). It is unlocked from the settings (`锁定` 关).
+- **Where it opens:** where it was left, while that is on a display; else centred at the bottom of
+  the main display's work area, an eighth of its height up.
+- **Settings (`设置 › 桌面歌词`, from the 播放 heading):** 显示桌面歌词 (关 / 开), 锁定 (关 / 开),
+  字号 (32 default; 24, 28, 36, 40, 48, 56), 文字颜色 (白色 default; 米黄, 天蓝), 进度颜色 (蓝色
+  default; 粉色, 绿色, 金色, 白色), 背景不透明度 (60% default; 0, 20, 40, 80%). The font is the
+  settings' font (§8.1). A change shows at once.
+- **Where an overlay cannot open** (Windows without DirectComposition, an X11 display without a
+  32-bit visual) the setting goes back to 关 with a toast saying why. On Wayland it is a layer
+  surface where the compositor has the layer shell (KDE, wlroots), else it opens through
+  XWayland; there, locked, the plate does not fade under the pointer.
+
 ## 4 Queue page (`views/side_panel/queue.rs`)
 
 - Heading "播放列表" (or the saved playlist's name; opens the playlist menu), style 20/28 bold. Under it, Body TextSecondary: "第 {n} 首，共 {m} 首" (+ " · {note}"); narrowed: "找到 {n} 首" (search) / "{artist}，{n} 首" / "{album}，{n} 首".
@@ -167,10 +199,11 @@ the transport, the icons and the text scale by them. Text keeps its rank, not ju
 - **播放:**
   - 回放增益: 关 (default) / 按单曲 / 按专辑. Songs play at the loudness their tags state (`REPLAYGAIN_TRACK_GAIN` / `REPLAYGAIN_ALBUM_GAIN`, else Opus' `R128_*`); 按单曲 takes the song's value, else its album's; 按专辑 the album's, else the song's; an untagged song plays as it is. A change applies to the song playing without a step (Windows: a ring's length later; Linux: the sound server's buffer later, about 0.1 s). Above 0 dB a peak limiter holds the sound under full scale. The kept value is sent to the engine before the first song opens.
   - 淡入淡出: 关 (default) / 1 秒 … 12 秒: how long one song overlaps the next (§2, Crossfade). It applies from the next song handed over: at once to the one playing.
+  - 桌面歌词: a card opens `设置 › 桌面歌词` (§3.1).
   - 音效: a card (how many effects) opens `设置 › 音效`: the CLAP effects the sound plays through (`plugins.md` "Audio effects (CLAP)"), in order, after ReplayGain and before the volume. One card per effect (name, vendor and version; or why it was taken out): 打开 (its own window, floating above the player; one that only embeds opens in a window of the player's), 上移 / 下移, 移除, 参数 (for an effect with parameters), and 开 / 关 (its switch; 关: bypassed, still on time). 参数 opens `设置 › 音效 › <name>`: the effect's card (打开, 开 / 关), then under 参数 a card per parameter (grouped under its module's heading), its value as the effect prints it: a slider (the face's volume bar: a pill filled white up to the value, no thumb); a switch for one of two values, a dropdown for one of a few; none for one only the effect sets. A value set there is heard within a quarter second (what is already buffered) and shows in the effect's window; one turned in its window shows on the page. Below, 添加音效: the effects found (`CLAP_PATH`, then the system's CLAP folders), each with 添加, and 重新查找. A change to the chain is heard from the next seek or song. Opening the page builds the effects' windows in the background, so 打开 shows one at once; it never waits for the plugin. An effect that fails (an error, a NaN or infinity, a rate it cannot run at) is taken out for the session and its card says why; the song goes on without it.
 - **插件:** a card `插件` (installed and enabled counts) opens `设置 › 插件`: one card per plugin (its state; the account when connected) opening its page, then 安装插件 (打开目录 / 安装…). A plugin's page: name, version (when its manifest gives one; the in-tree plugins give none until published), state and its switch (the first press shows what it asks for and 再点一次以启用; the second enables; off disables); 连接 (the form, a QR code while connecting, the account and 退出 when connected); 导入歌单…; a control that could not be read; 删除插件. The app menu's plugin rows and their panel stay as the quick way in; both show the same thing.
 - **关于:** the version and the commit this build was made from ("development build" when built outside a checkout), Player-Core revision, licences: FFmpeg LGPL notice, TAK decoder terms (Windows), ASIO and the GPL-3.0 it puts the build under (Windows with `asio`), Noto Sans OFL.
-- **Kept:** `settings.txt` in the data dir (`key value` lines; unknown keys kept): `font` (family, empty: default), `layout` (`auto` / `single`), `lyric-style` (an installed style's id; empty: the built-in one), `locale` (`zh-CN` / `en`; empty: the system's), `replay-gain` (`off` / `track` / `album`; absent: off), `crossfade` (`off` / `1` … `12` seconds; absent: off), `keyboard-navigation` (`off` / `on`; absent: off), `screen-reader` (`off` / `on`; absent: off: whether screen readers reach the window, read once at start).
+- **Kept:** `settings.txt` in the data dir (`key value` lines; unknown keys kept): `font` (family, empty: default), `layout` (`auto` / `single`), `lyric-style` (an installed style's id; empty: the built-in one), `locale` (`zh-CN` / `en`; empty: the system's), `replay-gain` (`off` / `track` / `album`; absent: off), `crossfade` (`off` / `1` … `12` seconds; absent: off), `keyboard-navigation` (`off` / `on`; absent: off), `screen-reader` (`off` / `on`; absent: off: whether screen readers reach the window, read once at start), `desktop-lyrics`, `desktop-lyrics-lock` (`off` / `on`), `desktop-lyrics-size`, `-ink`, `-sung`, `-plate` (§3.1; absent or not offered: the default), `desktop-lyrics-place` (where it was left: its bottom centre, `x y` in the system's measure).
 
 ## 9 Persistence (`main.rs` `DATA_DIR`, `library/store.rs`, `app/settings.rs`)
 
@@ -182,7 +215,7 @@ else `~/.local/share`.
 | `playlists\` | `index.txt` and `p<id>.txt` (§5) | writer thread, temp + rename |
 | `row-cache-v2\` | rows' tags and cover thumbnails by source, in their folder's group, a thumbnail kept once by its content; a hit never touches the media path; local records expire after 7 days; rescan and cover edits invalidate | worker, temp + rename |
 | `chosen-covers\` | covers the user picked for a song (never written beside the media) | temp + rename |
-| `settings.txt` | `font`, `layout`, `lyric-style`, `locale`, `replay-gain` (§8.1); unknown keys kept | on change, writer thread |
+| `settings.txt` | `font`, `layout`, `lyric-style`, `locale`, `replay-gain`, the desktop lyrics' (§8.1, §3.1); unknown keys kept | on change, writer thread |
 | `lyrics-layers.txt` | which lyric layers are folded (§3) | on change, writer thread |
 | `volume.txt` | `volume`, `unmuted` (§2) | 1 s after it changes, and at exit; writer thread |
 | `output.txt` | driver, device, DoP (§2) | on change, writer thread |

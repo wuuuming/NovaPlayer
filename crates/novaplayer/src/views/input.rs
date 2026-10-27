@@ -263,7 +263,8 @@ fn handle_event(p: &mut Player, ui: &mut Ui, ev: Event) {
                 p.settings_page.reveal(ui, &mut p.doc, id);
             }
         }
-        Event::Message(_) | Event::WindowFocus(_) => {}
+        // The player's window is no overlay: it is never moved as one.
+        Event::Message(_) | Event::WindowFocus(_) | Event::Moved => {}
     }
 }
 

@@ -24,6 +24,8 @@ pub enum Level {
     Plugins,
     /// `设置 › 音效`: the CLAP effects the sound plays through.
     Effects,
+    /// `设置 › 桌面歌词`: the desktop lyrics' choices (laid out in the sheet).
+    DesktopLyrics,
     /// `设置 › 插件 › <name>`: one plugin (its id).
     Plugin(String),
     /// `设置 › 音效 › <name>`: the parameters of the effect at this place in the chain.
@@ -31,13 +33,14 @@ pub enum Level {
 }
 
 impl Level {
-    /// The sheet's container a level is built in: the first level's own (`#settings-root`), a
-    /// deeper level's (`#settings-level`).
+    /// The sheet's container a level is in: the first level's own (`#settings-root`), the desktop
+    /// lyrics' (`#settings-desktop-lyrics`, laid out in the sheet), a level built here
+    /// (`#settings-level`).
     pub fn container(&self) -> &'static str {
-        if *self == Level::Root {
-            "settings-root"
-        } else {
-            "settings-level"
+        match self {
+            Level::Root => "settings-root",
+            Level::DesktopLyrics => "settings-desktop-lyrics",
+            _ => "settings-level",
         }
     }
 }
@@ -46,7 +49,7 @@ impl Level {
     fn depth(&self) -> u8 {
         match self {
             Level::Root => 0,
-            Level::Plugins | Level::Effects => 1,
+            Level::Plugins | Level::Effects | Level::DesktopLyrics => 1,
             Level::Plugin(_) | Level::Effect(_) => 2,
         }
     }
@@ -54,7 +57,7 @@ impl Level {
     fn parent(&self) -> Option<Level> {
         match self {
             Level::Root => None,
-            Level::Plugins | Level::Effects => Some(Level::Root),
+            Level::Plugins | Level::Effects | Level::DesktopLyrics => Some(Level::Root),
             Level::Plugin(_) => Some(Level::Plugins),
             Level::Effect(_) => Some(Level::Effects),
         }
@@ -422,6 +425,7 @@ fn build(v: &mut Views, ui: &mut Ui, m: &Models) {
             trail.push((ui.t("effects.title", &[]), Level::Effects));
             build_effects(v, ui, m, deep);
         }
+        Level::DesktopLyrics => trail.push((ui.t("desktop-lyrics.title", &[]), Level::DesktopLyrics)),
         Level::Plugin(id) => {
             trail.push((ui.t("plugins.title", &[]), Level::Plugins));
             let name = m.plugin.registry.name_of(id);
@@ -434,9 +438,10 @@ fn build(v: &mut Views, ui: &mut Ui, m: &Models) {
             build_effect(v, ui, m, deep, *at);
         }
     }
-    let first = level == Level::Root;
-    ui.tree.set_layout(root, |l| l.display = if first { Display::Flex } else { Display::None });
-    ui.tree.set_layout(deep, |l| l.display = if first { Display::None } else { Display::Flex });
+    let own = v.doc.id(level.container());
+    for c in [root, deep, v.doc.id("settings-desktop-lyrics")] {
+        ui.tree.set_layout(c, |l| l.display = if c == own { Display::Flex } else { Display::None });
+    }
     let page = &mut v.settings_page;
     page.trail = trail;
     page.crumbs = None;
@@ -885,7 +890,70 @@ pub const SETTINGS: &[Setting] = &[
     Setting { key: "crossfade", choices: crossfade_choices, apply: apply_crossfade },
     Setting { key: "keyboard-navigation", choices: keyboard_navigation_choices, apply: apply_keyboard_navigation },
     Setting { key: "screen-reader", choices: screen_reader_choices, apply: apply_screen_reader },
+    Setting { key: dl::SHOWN, choices: desktop_lyrics_choices, apply: |_, _, v| v == Some("on") },
+    Setting { key: dl::LOCKED, choices: desktop_lyrics_lock_choices, apply: |_, _, v| v == Some("on") },
+    Setting { key: dl::SIZE, choices: desktop_lyrics_size_choices, apply: |ui, _, v| offered(ui, dl::SIZE, v) },
+    Setting { key: dl::INK, choices: desktop_lyrics_ink_choices, apply: |ui, _, v| offered(ui, dl::INK, v) },
+    Setting { key: dl::SUNG, choices: desktop_lyrics_sung_choices, apply: |ui, _, v| offered(ui, dl::SUNG, v) },
+    Setting { key: dl::PLATE, choices: desktop_lyrics_plate_choices, apply: |ui, _, v| offered(ui, dl::PLATE, v) },
 ];
+
+use crate::views::desktop_lyrics as dl;
+
+/// Off (the default), on: what a choice of two says.
+fn off_on(ui: &Ui, prefix: &str) -> Vec<Choice> {
+    ["off", "on"]
+        .into_iter()
+        .map(|v| {
+            let label = ui.t(&format!("{prefix}.{v}"), &[]);
+            Choice { names: vec![label.clone()], label, value: v.to_owned() }
+        })
+        .collect()
+}
+
+/// Off (the default), on: the desktop lyrics are up (`views::desktop_lyrics`, every present).
+fn desktop_lyrics_choices(ui: &Ui) -> Vec<Choice> {
+    off_on(ui, "desktop-lyrics")
+}
+
+/// Off (the default), on: presses go through them.
+fn desktop_lyrics_lock_choices(ui: &Ui) -> Vec<Choice> {
+    off_on(ui, "desktop-lyrics.lock")
+}
+
+/// A choice named by its value: the default first, named so.
+fn named(ui: &Ui, values: impl IntoIterator<Item = String>, name: impl Fn(&str) -> String) -> Vec<Choice> {
+    values
+        .into_iter()
+        .enumerate()
+        .map(|(k, value)| {
+            let label = if k == 0 { ui.t("desktop-lyrics.default", &[("v", &name(&value))]) } else { name(&value) };
+            Choice { names: vec![label.clone(), value.clone()], label, value }
+        })
+        .collect()
+}
+
+fn desktop_lyrics_size_choices(ui: &Ui) -> Vec<Choice> {
+    named(ui, dl::SIZES.map(|s| s.to_string()), str::to_owned)
+}
+
+fn desktop_lyrics_ink_choices(ui: &Ui) -> Vec<Choice> {
+    named(ui, dl::INKS.map(|(n, _)| n.to_owned()), |n| ui.t(&format!("colour.{n}"), &[]))
+}
+
+fn desktop_lyrics_sung_choices(ui: &Ui) -> Vec<Choice> {
+    named(ui, dl::SUNGS.map(|(n, _)| n.to_owned()), |n| ui.t(&format!("colour.{n}"), &[]))
+}
+
+fn desktop_lyrics_plate_choices(ui: &Ui) -> Vec<Choice> {
+    named(ui, dl::PLATES.map(|p| p.to_string()), |p| format!("{p}%"))
+}
+
+/// Nothing now: the desktop lyrics read the setting `key` at their next present. True for a
+/// value its choices offer other than the default.
+fn offered(ui: &Ui, key: &str, value: Option<&str>) -> bool {
+    setting(key).is_some_and(|s| (s.choices)(ui).iter().skip(1).any(|c| Some(c.value.as_str()) == value))
+}
 
 /// The setting kept under `key`.
 pub fn setting(key: &str) -> Option<&'static Setting> {

@@ -62,6 +62,7 @@ pub struct Views<'a> {
     pub transport: &'a mut crate::views::transport::Transport,
     pub import: &'a mut crate::views::import_dialog::ImportDialog,
     pub settings_page: &'a mut crate::views::settings_page::SettingsPage,
+    pub desktop_lyrics: &'a mut crate::views::desktop_lyrics::DesktopLyrics,
 }
 
 impl Views<'_> {
@@ -126,6 +127,8 @@ pub struct Player {
     pub settings_page: crate::views::settings_page::SettingsPage,
     /// The settings page's choices (`settings.txt`).
     pub settings: settings::SettingsFile,
+    /// The desktop lyrics' overlay, while the setting has it up.
+    pub desktop_lyrics: crate::views::desktop_lyrics::DesktopLyrics,
     /// The kept files changed and not yet written (`kept`).
     pub keeping: kept::Keeping,
     pub toast: crate::views::toast::Toast,
@@ -251,6 +254,7 @@ impl Player {
             import: Default::default(),
             settings_page: crate::views::settings_page::SettingsPage::new(ui),
             settings,
+            desktop_lyrics: crate::views::desktop_lyrics::DesktopLyrics::new(ui),
             keeping: kept::Keeping::new(ui.clock(Msg::Keep)),
             toast: crate::views::toast::Toast::new(ui),
             transport: crate::views::transport::Transport::new(ui),
@@ -321,6 +325,7 @@ impl Player {
                 transport: &mut self.transport,
                 import: &mut self.import,
                 settings_page: &mut self.settings_page,
+                desktop_lyrics: &mut self.desktop_lyrics,
             },
             Models {
                 playback: &self.playback,
@@ -493,6 +498,7 @@ impl App for Player {
                 Some(Msg::Connect) => crate::plugins::connect::due(self, ui),
                 // A plugin that was being checked is now on, or changed.
                 Some(Msg::PluginsChecked) => self.rescan_plugins(ui),
+                Some(Msg::DesktopLyrics) => self.desktop_lyrics_told(ui),
                 _ => {}
             }
             if let Some(a) = m.downcast_ref::<crate::app::Answer>() {
@@ -642,6 +648,24 @@ impl Player {
         self.note_volume();
         for what in self.keeping.due(ui.now()) {
             self.keep(what);
+        }
+    }
+
+    /// What the desktop lyrics' overlay told: its presses are the player's commands; one that
+    /// could not open turns the setting off and says why.
+    fn desktop_lyrics_told(&mut self, ui: &mut Ui) {
+        use crate::views::desktop_lyrics::{FromOverlay, SHOWN};
+        while let Ok(told) = self.desktop_lyrics.from_overlay.try_recv() {
+            match told {
+                FromOverlay::Command(text) => match text.parse::<command::Command>() {
+                    Ok(c) => command::run(self, ui, c),
+                    Err(e) => eprintln!("novaplayer: desktop lyrics: {e}"),
+                },
+                FromOverlay::Failed(why) => {
+                    self.choose_setting(ui, SHOWN, Some("off"));
+                    self.toast_error(ui, ui.t("toast.desktop-lyrics-failed", &[("e", &why)]));
+                }
+            }
         }
     }
 

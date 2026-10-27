@@ -1,0 +1,37 @@
+// Desktop lyrics (novaplayer-spec.md, "Desktop lyrics"): the sung line and the one under it on a
+// plate over every window. The overlay is sized to `#content`, laid out on a stage as wide as
+// the display's work area (`$stage`), not the window, so the window can follow it
+// (views/desktop_lyrics.rs). The look follows LyricsX's desktop lyrics: a plate fitting the
+// lines, its radius half the font size, padding one font size across and a third down, lines a
+// third apart.
+
+let size = $size;
+
+style bar-btn { width: 30; height: 30; radius: 6; icon-size: 16; fg: #FFFFFF; bg-hover: #26FFFFFF; bg-press: #14FFFFFF; }
+
+Box #root { width: 100%; height: 100%;
+  Column #stage { position: absolute; left: window.w / 2 - $stage / 2; width: $stage; bottom: 0; align: center;
+    Column #content { align: center; gap: 6; hit: true; hover-events: true;
+      // Over the unlocked plate the pointer shows these; locked, the plate only fades.
+      Row #bar { height: 34; padding: 0, 2; gap: 2; radius: 8; bg: $plate; align: center; opacity: 0;
+        Button #lock .bar-btn { icon: LockClosed; on-click: "set:desktop-lyrics-lock:on"; }
+        Button #prev .bar-btn { icon: PreviousFilled; on-click: prev; }
+        Button #play .bar-btn { icon: PlayFilled; on-click: play-pause; }
+        Button #next .bar-btn { icon: NextFilled; on-click: next; }
+        Button #smaller .bar-btn { icon: FontDecrease; on-click: smaller; }
+        Button #larger .bar-btn { icon: FontIncrease; on-click: larger; }
+        Button #close .bar-btn { icon: Dismiss; on-click: "set:desktop-lyrics:off"; }
+      }
+      Column #plate { padding: size / 3, size; radius: size / 2; bg: $plate; align: center;
+        Column #lines { align: center; gap: size / 3;
+          // The sung part swept in the progress colour, by word where the lyrics are timed so.
+          // A line wider than the stage wraps (two rows at most), as the lyrics page's do.
+          Text #line { text: $line; max-width: $stage - 2 * size; lines: 2; font-size: size; line: round(size * 1.3); weight: 600; fg: $ink; text-align: center;
+                       sweep: $sweep; sweep-fg: $sung; units: char; u-glow: 4, #FFFFFF, 0.22; }
+          Text #second { text: $second; max-width: $stage - 2 * size; lines: 2; font-size: size; line: round(size * 1.3); weight: 600; fg: $ink; text-align: center;
+                         fg-alpha: $second-alpha; shown: $has-second; units: char; u-glow: 4, #FFFFFF, 0.16; }
+        }
+      }
+    }
+  }
+}

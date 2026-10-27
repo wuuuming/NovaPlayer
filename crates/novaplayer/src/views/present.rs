@@ -111,6 +111,7 @@ impl Player {
         crate::views::toast::present_toast(&mut v, ui);
         v.side_panel.tick(ui, v.doc);
         crate::views::transport::present_vol_tip(&mut v, ui);
+        crate::views::desktop_lyrics::present(&mut v, ui, &m);
         crate::views::menus::drag::drag_tick(self, ui);
     }
 

@@ -29,6 +29,8 @@ pub enum Command {
     /// The volume by this many hundredths.
     VolumeBy(i32),
     Fullscreen,
+    /// The desktop lyrics come up or go (the setting `desktop-lyrics`).
+    DesktopLyrics,
     ToggleLyrics,
     ToggleQueue,
     ToggleInfo,
@@ -185,6 +187,7 @@ impl Command {
             "seek-by" => SeekBy(num(arg)?),
             "volume-by" => VolumeBy(num(arg)?),
             "fullscreen" => Fullscreen,
+            "desktop-lyrics" => DesktopLyrics,
             "toggle-lyrics" => ToggleLyrics,
             "toggle-queue" => ToggleQueue,
             "toggle-info" => ToggleInfo,
@@ -293,6 +296,7 @@ impl Command {
                 Some(("effect", at)) => Level::Effect(at.parse().ok()?),
                 None if arg == "plugins" => Level::Plugins,
                 None if arg == "effects" => Level::Effects,
+                None if arg == "desktop-lyrics" => Level::DesktopLyrics,
                 None if arg.is_empty() => Level::Root,
                 _ => return None,
             }),
@@ -361,6 +365,7 @@ impl fmt::Display for Command {
             Mute => f.write_str("mute"),
             Order => f.write_str("order"),
             Fullscreen => f.write_str("fullscreen"),
+            DesktopLyrics => f.write_str("desktop-lyrics"),
             ToggleLyrics => f.write_str("toggle-lyrics"),
             ToggleQueue => f.write_str("toggle-queue"),
             ToggleInfo => f.write_str("toggle-info"),
@@ -440,6 +445,7 @@ impl fmt::Display for Command {
             Settings(Level::Root) => f.write_str("settings"),
             Settings(Level::Plugins) => f.write_str("settings:plugins"),
             Settings(Level::Effects) => f.write_str("settings:effects"),
+            Settings(Level::DesktopLyrics) => f.write_str("settings:desktop-lyrics"),
             Effect { verb, at } => write!(f, "effect:{}:{at}", verb.name()),
             EffectsScan => f.write_str("effects-scan"),
             Settings(Level::Effect(at)) => write!(f, "settings:effect:{at}"),
@@ -500,6 +506,11 @@ pub fn run(p: &mut Player, ui: &mut Ui, c: Command) {
         }
         C::VolumeBy(v) => p.set_volume(p.playback.volume + v as f32 / 100.0),
         C::Fullscreen => ui.window.set_fullscreen(!ui.window.fullscreen()),
+        C::DesktopLyrics => {
+            use crate::views::desktop_lyrics::SHOWN;
+            let on = p.settings.get(SHOWN) == Some("on");
+            p.choose_setting(ui, SHOWN, Some(if on { "off" } else { "on" }));
+        }
         C::ToggleLyrics => p.side_panel.toggle(now, Page::Lyrics),
         C::ToggleQueue => p.side_panel.toggle(now, Page::Queue),
         C::ToggleInfo => {
@@ -961,6 +972,7 @@ mod tests {
             SeekBy(-5),
             VolumeBy(5),
             Fullscreen,
+            DesktopLyrics,
             ToggleLyrics,
             ToggleQueue,
             ToggleInfo,
@@ -1031,6 +1043,7 @@ mod tests {
             Settings(Level::Root),
             Settings(Level::Plugins),
             Settings(Level::Effects),
+            Settings(Level::DesktopLyrics),
             Settings(Level::Plugin(s())),
             Settings(Level::Effect(1)),
             Effect { verb: EffectVerb::Bypass, at: 1 },
@@ -1053,6 +1066,7 @@ mod tests {
                 | SeekBy(_)
                 | VolumeBy(_)
                 | Fullscreen
+                | DesktopLyrics
                 | ToggleLyrics
                 | ToggleQueue
                 | ToggleInfo

@@ -174,6 +174,7 @@ makes them.
 | `views/settings_page.rs` | the settings page: levels, cards, sliders, switches, `SETTINGS` |
 | `views/plugin_view.rs`, `plugin_controls.rs` | one plugin's description for both containers; mounted controls |
 | `views/import_dialog.rs`, `toast.rs` | the import dialog; the toast |
+| `views/desktop_lyrics.rs`, `ui/desktop-lyrics.nui` | desktop lyrics: what the player feeds them each present, and the overlay (its own thread) drawing it |
 
 ## 4. Mechanisms and the semantics they carry
 
@@ -204,6 +205,7 @@ can carry it (principles D2).
 | Registry | `plugins/registry.rs`; `Player::plugins_changed` | the process · UI | what is installed and enabled, what each provides, trust by fingerprint; a scan that finds a change syncs the host and the face cache's stamps once, and the app's one owner remounts the controls, reads the accounts and refreshes the views | a manifest |
 | Vault | `plugins/accounts.rs` | the user · caller | a plugin's credential and account name | a credential |
 | Fragment mount | `views/plugin_controls.rs`, `side_panel/lyrics.rs` (novaui `Doc::adopt`/`mount`) | a slot · UI | plugin controls, lyric styles | a fragment and a profile |
+| Desktop lyrics | `views/desktop_lyrics.rs` `DesktopLyrics` (player), `Overlay` (novaui `spawn_overlay`) | the setting · player UI → overlay thread | the overlay opened and closed as the setting says; a `Feed` (lyrics with their layers, the layer shown, the song's clock, the look) handed over when it changed, by a lock and the overlay's waker; its presses back as `Command` text (`Msg::DesktopLyrics`) | a `Feed` |
 | Setting | `views/settings_page.rs` `SETTINGS`, `menus/dropdown.rs` | the app · UI | a kept choice: its key, its choices, what it does | `Setting` |
 | Flyouts | `views/menus/mod.rs` on novaui `Flyout` | the window · UI | every menu and dropdown list; one main, one beside it | rows |
 | Queue rows | `views/side_panel/queue.rs` on NovaUI `VirtualList` | the shown list · UI | the rows in view, reused as they scroll; a dragged row and the rows giving way to it | `QueueRow` (the sheet's), its fill |
@@ -222,6 +224,7 @@ suite, named here by scenario.
 | Queue: rows, scroll, search (ranked on a worker: `SidePanel::positions`, `Job::Found`; the list's signatures kept while it is typed, a search typed on looks only at what the last one found), keys, autoscroll, list switching | `views/side_panel/queue.rs`, `library/queue.rs`, `lists.rs`, `app/query/` | scenario `queue`; `queue.rs`, `app/query` unit tests |
 | Window sizes and layout | `ui/player.nui`, `views/layout.rs` | scenario `window`, screenshots |
 | Product regressions, settings page, menus | `views/` | scenario `product`, `search_style_tests.rs`, `settings_page.rs` test |
+| Desktop lyrics | `views/desktop_lyrics.rs` | its unit tests (lines, sweep, sizes, place, the painted plate) |
 | Playlists on disk | `library/store.rs` | `list_roundtrip`, `files.rs` tests |
 | Row cache, faces kept, covers | `library/disk_cache.rs`, `row_cache.rs`, `plugins/client.rs` `cache`, `covers.rs` | their unit tests; `artwork_cache_shares_content_not_album_metadata` |
 | Plugins: host, calls, sign-in, packages, controls, PCM | `plugins/` | `host.rs`, `client.rs`, `registry.rs`, `controls.rs`, `pcm.rs`, `prints.rs` unit tests (with `examples/demo_plugin.rs`); scenario `plugins` (`plugins_check`, run by `product_regressions`) |
