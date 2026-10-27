@@ -15,12 +15,28 @@ impl SidePanel {
         self.searching = None;
         let task = match &self.narrow {
             Some(n) if n.ranked() => {
+                if self.signatures.as_ref().is_none_or(|s| s.0 != q.version) {
+                    self.signatures = Some((q.version, Default::default()));
+                }
+                let signed = self.signatures.as_ref().map(|s| s.1.clone()).unwrap_or_default();
+                // Typed on from the search shown (the same list, order and narrowing): only what
+                // it found can be found.
+                let shown = self.positions_key.2.as_ref().filter(|s| {
+                    (self.positions_key.0, self.positions_key.1) == (q.version, q.order_version)
+                        && s.ranked()
+                        && (&s.artist, &s.album) == (&n.artist, &n.album)
+                        && crate::app::query::Query::new(&n.text).narrows(&crate::app::query::Query::new(&s.text))
+                });
+                let within = shown.map(|_| self.positions.to_vec());
                 let (songs, order, n, of) = (q.list.songs.clone(), q.list.order.clone(), n.clone(), key.clone());
                 ui.spawn(
                     novaui::Priority::Visible,
                     move |cancel| {
                         let stop = || cancel.cancelled();
-                        library::queue::filter(&songs, &order, &n.text, n.artist.as_deref(), n.album.as_deref(), &stop)
+                        let signed = signed.get_or_init(|| library::queue::signatures(&songs));
+                        let (text, artist, album) = (&n.text, n.artist.as_deref(), n.album.as_deref());
+                        let within = within.as_deref();
+                        library::queue::filter(&songs, Some(signed), &order, within, text, artist, album, &stop)
                     },
                     move |positions| crate::app::Landed(crate::app::Job::Found(Found { of, positions })),
                 )
@@ -32,6 +48,10 @@ impl SidePanel {
             // Nothing typed (the whole list, an artist, an album): an exact look, here. A search
             // no worker took runs here too.
             None => {
+                if !self.narrow.as_ref().is_some_and(Narrow::ranked) {
+                    // The search is over: its signatures go.
+                    self.signatures = None;
+                }
                 self.positions = std::rc::Rc::new(match &self.narrow {
                     None => (0..q.len()).collect(),
                     Some(n) => q.filter(&n.text, n.artist.as_deref(), n.album.as_deref()),

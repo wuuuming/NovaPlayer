@@ -474,15 +474,32 @@ impl Queue {
     /// found in the title, artist or album (`Query`): the best found first, each rank in play
     /// order.
     pub fn filter(&self, q: &str, artist: Option<&str>, album: Option<&str>) -> Vec<usize> {
-        filter(&self.list.songs, &self.list.order, q, artist, album, &|| false)
+        filter(&self.list.songs, None, &self.list.order, None, q, artist, album, &|| false)
     }
 }
 
+/// The names a song is found by: its title, artist and album.
+fn names(s: &Song) -> impl Iterator<Item = &str> {
+    [Some(s.title()), s.tags.artist.as_deref(), s.tags.album.as_deref()].into_iter().flatten()
+}
+
+/// Each song's names' `Signature`, by song index: made once for a list, kept while words are
+/// typed over it (`filter`).
+pub fn signatures(songs: &[std::sync::Arc<Song>]) -> Vec<crate::app::query::Signature> {
+    songs.iter().map(|s| crate::app::query::Signature::of(names(s))).collect()
+}
+
 /// `Queue::filter` over `songs` in play order `order`, on any thread (a search over a long list
-/// runs on a worker). `stop` is asked now and then: true gives up, with what was found so far.
+/// runs on a worker). With the songs' `signatures`, a song a word cannot be in is passed over
+/// without its names being folded; `within`, the positions to look at (what a query this one
+/// narrows found: `Query::narrows`), else all. `stop` is asked now and then: true gives up,
+/// with what was found so far.
+#[allow(clippy::too_many_arguments)]
 pub fn filter(
     songs: &[std::sync::Arc<Song>],
+    signatures: Option<&[crate::app::query::Signature]>,
     order: &[usize],
+    within: Option<&[usize]>,
     q: &str,
     artist: Option<&str>,
     album: Option<&str>,
@@ -490,18 +507,32 @@ pub fn filter(
 ) -> Vec<usize> {
     let q = crate::app::query::Query::new(q);
     let mut out = Vec::new();
-    for (p, &i) in order.iter().enumerate() {
-        if p % 1024 == 1023 && stop() {
+    // In play order, so each rank keeps it.
+    let within = within.map(|w| {
+        let mut w = w.to_vec();
+        w.sort_unstable();
+        w
+    });
+    let places: Box<dyn Iterator<Item = usize>> = match &within {
+        Some(w) => Box::new(w.iter().copied()),
+        None => Box::new(0..order.len()),
+    };
+    for (n, p) in places.enumerate() {
+        if n % 1024 == 1023 && stop() {
             break;
         }
-        let Some(s) = songs.get(i) else { continue };
+        let Some(s) = order.get(p).and_then(|&i| songs.get(i).map(|s| (i, s))) else { continue };
+        let (i, s) = s;
         if artist.is_some_and(|a| s.tags.artist.as_deref() != Some(a))
             || album.is_some_and(|a| s.tags.album.as_deref() != Some(a))
         {
             continue;
         }
-        let names = [Some(s.title()), s.tags.artist.as_deref(), s.tags.album.as_deref()];
-        if let Some(found) = q.find(names.into_iter().flatten()) {
+        let found = match signatures.and_then(|g| g.get(i)) {
+            Some(sig) => q.find_signed(sig, names(s)),
+            None => q.find(names(s)),
+        };
+        if let Some(found) = found {
             out.push((found, p));
         }
     }

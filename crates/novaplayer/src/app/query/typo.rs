@@ -43,6 +43,11 @@ impl Typo {
         Some(Typo { len, k, ascii, places })
     }
 
+    /// The edits the word may be off by.
+    pub fn allowed(&self) -> usize {
+        self.k
+    }
+
     /// The word is within its allowed insertions, deletions, substitutions or swaps of two
     /// neighbours of some part of `text`.
     pub fn near(&self, text: &[char]) -> bool {

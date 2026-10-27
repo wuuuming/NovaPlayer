@@ -142,7 +142,7 @@ makes them.
 | `app/kept.rs` | `Kept`, `Keeping` (what is changed and when it is due), `Player::keep` |
 | `app/settings.rs` | `SettingsFile` (`settings.txt`), `Player::set_setting`, the lyrics layers' file |
 | `app/lyric_styles.rs` | lyric style packages: install, list, find, remove |
-| `app/query/` | `Query`: every typed word found in one of the names, as text, by reading or with a typo (`Found` ranks); `fold` (folding, pieces), `kana`, `hangul`, `han` (Unihan readings, `readings.z` by `tools/readings.py`), `typo` (bit-parallel edit distance) |
+| `app/query/` | `Query`: every typed word found in one of the names, as text, by reading or with a typo (`Found` ranks); `Signature` (a thing's names as bit masks: most things are passed over unfolded), `Query::narrows` (typed on: only what was found before can be found); `fold` (folding, pieces), `kana`, `hangul`, `han` (Unihan readings, `readings.z` by `tools/readings.py`), `typo` (bit-parallel edit distance) |
 | `library/mod.rs` | `Song`, `Tags`, lyrics (`Lyrics`, `Group`, layers), CUE, M3U, folder scan, `read_tags`, the colour field, cover decode, format texts |
 | `library/queue.rs` | `Queue` (a list, its position, play order, shuffle round, sort, filter), `Order`, `Sort` |
 | `library/store.rs` | playlists on disk: index and lists, `Origin`, `Entry`, `List`, the writer thread, the watcher |
@@ -219,7 +219,7 @@ suite, named here by scenario.
 |---|---|---|
 | Playing, end, errors, hand-over, crossfade | `playback/session.rs`, `engine.rs`, `app/mod.rs` `turn` | scenario `playback`; `engine.rs` `failure_tests`; `engine/http_tests.rs` (Linux, L5) |
 | Lyrics: groups, words, layers, styles, motion | `library/mod.rs`, `views/side_panel/lyrics.rs` | scenario `lyrics`; `library` unit tests (`lrc_groups_and_offset`, `layers_sit_under_their_lines_in_order`); `lyric_styles.rs` test |
-| Queue: rows, scroll, search (ranked on a worker: `SidePanel::positions`, `Job::Found`), keys, autoscroll, list switching | `views/side_panel/queue.rs`, `library/queue.rs`, `lists.rs`, `app/query/` | scenario `queue`; `queue.rs`, `app/query` unit tests |
+| Queue: rows, scroll, search (ranked on a worker: `SidePanel::positions`, `Job::Found`; the list's signatures kept while it is typed, a search typed on looks only at what the last one found), keys, autoscroll, list switching | `views/side_panel/queue.rs`, `library/queue.rs`, `lists.rs`, `app/query/` | scenario `queue`; `queue.rs`, `app/query` unit tests |
 | Window sizes and layout | `ui/player.nui`, `views/layout.rs` | scenario `window`, screenshots |
 | Product regressions, settings page, menus | `views/` | scenario `product`, `search_style_tests.rs`, `settings_page.rs` test |
 | Playlists on disk | `library/store.rs` | `list_roundtrip`, `files.rs` tests |

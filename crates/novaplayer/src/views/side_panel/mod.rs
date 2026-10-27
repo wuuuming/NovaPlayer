@@ -195,6 +195,9 @@ pub struct SidePanel {
     /// for; dropped (and so called off) when another is typed. The rows shown stay until it
     /// lands (`found`).
     searching: Option<(Listed, novaui::Task)>,
+    /// The shown list's songs' signatures (`queue::signatures`) while a search is typed over it,
+    /// with the list version they are of: made by the first search's worker, shared by the next.
+    signatures: Option<(u64, std::sync::Arc<std::sync::OnceLock<Vec<crate::app::query::Signature>>>)>,
     pub scroll: f32,
     target: f32,
     /// The row pitch and list height the scroll was last laid out at: a resize keeps the same
@@ -304,6 +307,7 @@ impl SidePanel {
             positions: Default::default(),
             positions_key: Default::default(),
             searching: None,
+            signatures: None,
             scroll: Default::default(),
             target: Default::default(),
             last_rh: Default::default(),

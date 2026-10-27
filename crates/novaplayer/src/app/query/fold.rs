@@ -129,6 +129,30 @@ fn greek(c: char) -> Option<&'static str> {
     })
 }
 
+/// What a reading starting with `c` can be found by: a bit per letter `a`-`z`, one for any
+/// other character (`OTHER`); `NOTHING` for a reading that is nothing (`っ`, skipped).
+pub(super) fn start(c: char) -> u32 {
+    if c.is_ascii_lowercase() {
+        1 << (c as u32 - 'a' as u32)
+    } else {
+        OTHER
+    }
+}
+pub(super) const OTHER: u32 = 1 << 30;
+pub(super) const NOTHING: u32 = 1 << 31;
+
+/// A bit for each of `a`-`z` and `0`-`9` among `chars`; nothing for any other character. A word
+/// cannot be found in a text lacking more of its letters than it may be off by.
+pub(super) fn letters(chars: impl IntoIterator<Item = char>) -> u64 {
+    chars.into_iter().fold(0, |m, c| {
+        m | match c {
+            'a'..='z' => 1 << (c as u32 - 'a' as u32),
+            '0'..='9' => 1 << (26 + c as u32 - '0' as u32),
+            _ => 0,
+        }
+    })
+}
+
 /// What a piece of a name is read as (`Piece`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Kind {

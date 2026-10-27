@@ -77,6 +77,26 @@ const SURNAMES: [(char, &[&str]); 9] = [
     ('손', &["sohn"]),
 ];
 
+/// What the spellings of syllable `c` start with (its jamo is `OTHER`), and the letters of the
+/// first (the Revised Romanization), from the tables, without spelling them out (`readings`).
+pub(super) fn masks(c: char) -> (u32, u64) {
+    use super::fold::{letters, start, OTHER};
+    let Some(s) = (c as u32).checked_sub(0xAC00).filter(|s| *s < 11172) else { return (0, 0) };
+    let (i, m, t) = ((s / 588) as usize, (s % 588 / 28) as usize, (s % 28) as usize);
+    let mut starts = OTHER;
+    let sh = i == 9 && MEDIAL[m][0].starts_with(['i', 'y']);
+    for a in [INITIAL[i], INITIAL_ALSO[i]].into_iter().chain(sh.then_some("sh")) {
+        match a.chars().next() {
+            Some(c) => starts |= start(c),
+            None => MEDIAL[m].iter().filter_map(|b| b.chars().next()).for_each(|c| starts |= start(c)),
+        }
+    }
+    for n in SURNAMES.iter().filter(|n| n.0 == c).flat_map(|n| n.1.iter()) {
+        starts |= n.chars().next().map_or(0, start);
+    }
+    (starts, letters(INITIAL[i].chars().chain(MEDIAL[m][0].chars()).chain(FINAL[t][0].chars())))
+}
+
 /// Calls `f` with each way the syllable `c` is typed, until it returns true (then true): its
 /// first consonant's jamo, then its spellings.
 pub(super) fn readings(c: char, f: &mut dyn FnMut(&str) -> bool) -> bool {

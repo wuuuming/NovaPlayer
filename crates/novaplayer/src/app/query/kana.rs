@@ -154,6 +154,45 @@ pub(super) fn readings(text: &[char], pieces: &[Piece], i: usize, f: &mut dyn Fn
     }
 }
 
+/// What the ways the kana piece `i` is typed start with, and the letters of the first that is not
+/// nothing (the one a name's reading takes): at least what `readings` gives (`っ` as the next
+/// mora's consonants, `ー` as any vowel, `う` / `お` as nothing too), without working out which
+/// vowel or consonant it takes.
+pub(super) fn masks(text: &[char], pieces: &[Piece], i: usize) -> (u32, u64) {
+    use super::fold::{letters, start, NOTHING};
+    let p = pieces[i];
+    let (mut starts, mut first) = (0, None);
+    let mut add = |s: &str| {
+        starts |= s.chars().next().map_or(NOTHING, start);
+        if first.is_none() && !s.is_empty() {
+            first = Some(letters(s.chars()));
+        }
+        false
+    };
+    match text[p.at] {
+        '\u{3063}' => {
+            let next = pieces.get(i + 1).filter(|q| q.kind == Kind::Kana && q.at == p.at + p.len);
+            if let Some(n) = next {
+                spellings(n.chars(text), &mut add);
+            }
+            starts |= NOTHING;
+        }
+        '\u{30FC}' | '\u{309D}' | '\u{309E}' => {
+            for v in ["", "a", "i", "u", "e", "o"] {
+                add(v);
+            }
+            first = Some(letters("aiueo".chars()));
+        }
+        c => {
+            spellings(p.chars(text), &mut add);
+            if p.len == 1 && matches!(c, '\u{3046}' | '\u{304A}') {
+                starts |= NOTHING;
+            }
+        }
+    }
+    (starts, first.unwrap_or(0))
+}
+
 /// Calls `f` with each spelling of one mora (one kana, or one with its small kana).
 fn spellings(m: &[char], f: &mut dyn FnMut(&str) -> bool) -> bool {
     let Some((hep, kun, more)) = mora(m[0]) else { return false };
@@ -171,13 +210,9 @@ fn spellings(m: &[char], f: &mut dyn FnMut(&str) -> bool) -> bool {
             let mut buf = String::new();
             for s in all {
                 if joined(s, m[0], small, &mut buf) {
-                    if f(&buf) {
+                    // `sho` before `shyo`: the first is the one a name's reading takes.
+                    if without_y(&buf).is_some_and(|short| f(&short)) || f(&buf) {
                         return true;
-                    }
-                    if let Some(short) = without_y(&buf) {
-                        if f(&short) {
-                            return true;
-                        }
                     }
                 }
             }
@@ -190,7 +225,7 @@ fn spellings(m: &[char], f: &mut dyn FnMut(&str) -> bool) -> bool {
 fn hepburn(m: &[char]) -> String {
     let mut out = String::new();
     spellings(m, &mut |s| {
-        out = without_y(s).unwrap_or_else(|| s.to_owned());
+        out = s.to_owned();
         true
     });
     out
@@ -296,7 +331,7 @@ mod tests {
             first.push(s.to_owned());
             false
         });
-        assert_eq!(first, ["shyo", "sho", "syo"]);
+        assert_eq!(first, ["sho", "shyo", "syo"]);
         let mut second = Vec::new();
         readings(&text, &p, 1, &mut |s| {
             second.push(s.to_owned());

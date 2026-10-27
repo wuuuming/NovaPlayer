@@ -6,12 +6,32 @@ use std::sync::OnceLock;
 
 static DATA: &[u8] = include_bytes!("readings.z");
 
-/// Every character's readings: `keys` sorted; character `k`'s readings are `ids[first[k]..
-/// first[k + 1]]`, each an index into `ends`, the end of that reading in `pool`.
+/// The planes the table covers (`tools/readings.py` `HAN`), laid end to end by `slot`.
+const RANGES: [(u32, u32); 3] = [(0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xF900, 0xFAFF)];
+
+/// Where `c` sits in the ranges laid end to end; `None` outside them.
+fn slot(c: char) -> Option<usize> {
+    let c = c as u32;
+    let mut base = 0;
+    for (lo, hi) in RANGES {
+        if (lo..=hi).contains(&c) {
+            return Some((base + c - lo) as usize);
+        }
+        base += hi - lo + 1;
+    }
+    None
+}
+
+/// Every character's readings, found by its `slot` (`entry`: the entry's index + 1, 0 for none).
+/// Entry `k`'s readings are `ids[first[k]..first[k + 1]]`, each an index into `ends`, the end of
+/// that reading in `pool`; `starts[k]` is what they start with (`fold::start`) and `letters[k]`
+/// the letters of the first (`fold::letters`), so a search learns them without spelling them out.
 pub(super) struct Table {
-    keys: Vec<char>,
+    entry: Vec<u32>,
     first: Vec<u32>,
     ids: Vec<u32>,
+    starts: Vec<u32>,
+    letters: Vec<u64>,
     pool: String,
     ends: Vec<u32>,
 }
@@ -39,7 +59,16 @@ pub fn warm() {
 }
 
 fn load() -> Table {
-    let mut t = Table { keys: Vec::new(), first: vec![0], ids: Vec::new(), pool: String::new(), ends: Vec::new() };
+    let size = RANGES.iter().map(|(lo, hi)| (hi - lo + 1) as usize).sum();
+    let mut t = Table {
+        entry: vec![0; size],
+        first: vec![0],
+        ids: Vec::new(),
+        starts: Vec::new(),
+        letters: Vec::new(),
+        pool: String::new(),
+        ends: Vec::new(),
+    };
     let text = match miniz_oxide::inflate::decompress_to_vec_zlib(DATA) {
         Ok(bytes) => String::from_utf8(bytes).unwrap_or_default(),
         Err(e) => {
@@ -51,7 +80,7 @@ fn load() -> Table {
     let mut own: Vec<u32> = Vec::new();
     for line in text.lines() {
         let mut chars = line.chars();
-        let Some(key) = chars.next() else { continue };
+        let Some(at) = chars.next().and_then(slot) else { continue };
         own.clear();
         for r in chars.as_str().split(' ').filter(|r| !r.is_empty()) {
             let mut add = |s: String| {
@@ -76,7 +105,11 @@ fn load() -> Table {
                 add(r.to_owned());
             }
         }
-        t.keys.push(key);
+        t.entry[at] = t.first.len() as u32;
+        let starts = own.iter().fold(0, |m, &id| m | t.reading(id).chars().next().map_or(0, super::fold::start));
+        let letters = own.first().map_or(0, |&id| super::fold::letters(t.reading(id).chars()));
+        t.starts.push(starts);
+        t.letters.push(letters);
         t.ids.extend_from_slice(&own);
         t.first.push(t.ids.len() as u32);
     }
@@ -84,14 +117,33 @@ fn load() -> Table {
 }
 
 impl Table {
+    /// The entry of `c`, if it has readings.
+    fn of(&self, c: char) -> Option<usize> {
+        slot(c).and_then(|s| self.entry[s].checked_sub(1)).map(|k| k as usize)
+    }
+
+    fn reading(&self, id: u32) -> &str {
+        let start = id.checked_sub(1).map_or(0, |p| self.ends[p as usize]) as usize;
+        &self.pool[start..self.ends[id as usize] as usize]
+    }
+
+    fn ids(&self, k: usize) -> &[u32] {
+        &self.ids[self.first[k] as usize..self.first[k + 1] as usize]
+    }
+
     /// Calls `f` with each reading of `c` until it returns true (then true).
     pub fn readings(&self, c: char, f: &mut dyn FnMut(&str) -> bool) -> bool {
-        let Ok(k) = self.keys.binary_search(&c) else { return false };
-        let ids = &self.ids[self.first[k] as usize..self.first[k + 1] as usize];
-        ids.iter().any(|&id| {
-            let start = id.checked_sub(1).map_or(0, |p| self.ends[p as usize]) as usize;
-            f(&self.pool[start..self.ends[id as usize] as usize])
-        })
+        self.of(c).is_some_and(|k| self.ids(k).iter().any(|&id| f(self.reading(id))))
+    }
+
+    /// Its first reading (Mandarin where it has one).
+    pub fn first(&self, c: char) -> Option<&str> {
+        self.of(c).and_then(|k| self.ids(k).first()).map(|&id| self.reading(id))
+    }
+
+    /// What its readings start with, and the letters of the first (none: no readings).
+    pub fn masks(&self, c: char) -> (u32, u64) {
+        self.of(c).map_or((0, 0), |k| (self.starts[k], self.letters[k]))
     }
 }
 
