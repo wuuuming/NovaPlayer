@@ -104,30 +104,34 @@ taskbar entry, never takes the keyboard, transparent around its plate).
 
 - **On and off:** the button at the left of the row above the progress bar (over the elapsed
   time; lit while they are up), and `设置 › 桌面歌词 › 显示桌面歌词`. Closing the player closes them.
-- **Lines:** the sung line, its sung part swept in the progress colour (by word where the lyrics
-  stamp words, else evenly to the next line); under it, the translation (else the romanisation)
+- **Lines:** the sung line, its sung part swept word by word in the progress colour when every
+  line of the lyrics stamps its words (enhanced LRC); other lyrics show the line whole, unswept.
+  Under it, the translation (else the romanisation)
   when the song carries one and the lyrics page shows it (§3, layers), else the group's own second
   line, else the next line (dimmer). Before the first line it stands unsung; without lyrics, the
   title over the artist. A change of lines fades the old out and the new in (0.25 s).
 - **Look (LyricsX's desktop lyrics):** one plate fitting the lines, its corner radius half the font
   size, padding a third of the size down and one size across, the lines a third of the size apart,
-  semibold, centred. The window is as large as the plate and grows and shrinks about its bottom
+  semibold, centred, each glyph with a thin dark border (no glow) so it reads over any background.
+  The window is as large as the plate and grows and shrinks about its bottom
   centre.
-- **Unlocked:** the plate drags it anywhere; where it was let go is kept. The pointer over it
-  shows a bar above the plate: 锁定, 上一首, 播放/暂停, 下一首, A−, A+ (the sizes offered, one
-  step), 关闭.
-- **Locked:** presses go through to what is under it; the pointer over it only fades it a little (to
-  70%). It is unlocked from the settings (`锁定` 关).
+- **The bar:** the pointer over it shows a bar above the plate, locked or not: 锁定 (解锁 while
+  locked), 上一首, 播放/暂停, 下一首, A−, A+ (the sizes offered, one step), 关闭.
+- **Unlocked:** the plate drags it anywhere; where it was let go is kept. Under the pointer the
+  plate is at least 40% black, showing where to drag.
+- **Locked:** presses go through to what is under it, except on the bar; the pointer over it shows
+  the bar and fades the lines a little (to 70%). It is unlocked from the bar or the settings
+  (`锁定` 关).
 - **Where it opens:** where it was left, while that is on a display; else centred at the bottom of
   the main display's work area, an eighth of its height up.
 - **Settings (`设置 › 桌面歌词`, from the 播放 heading):** 显示桌面歌词 (关 / 开), 锁定 (关 / 开),
   字号 (32 default; 24, 28, 36, 40, 48, 56), 文字颜色 (白色 default; 米黄, 天蓝), 进度颜色 (蓝色
-  default; 粉色, 绿色, 金色, 白色), 背景不透明度 (60% default; 0, 20, 40, 80%). The font is the
+  default; 粉色, 绿色, 金色, 白色), 背景不透明度 (0% default; 20, 40, 60, 80%). The font is the
   settings' font (§8.1). A change shows at once.
 - **Where an overlay cannot open** (Windows without DirectComposition, an X11 display without a
   32-bit visual) the setting goes back to 关 with a toast saying why. On Wayland it is a layer
   surface where the compositor has the layer shell (KDE, wlroots), else it opens through
-  XWayland; there, locked, the plate does not fade under the pointer.
+  XWayland; there, locked, the pointer over it shows nothing, and it is unlocked from the settings.
 
 ## 4 Queue page (`views/side_panel/queue.rs`)
 

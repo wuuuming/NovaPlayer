@@ -38,12 +38,14 @@ pub const INKS: [(&str, u32); 3] = [("white", 0xFFFFFFFF), ("cream", 0xFFFFF3C4)
 pub const SUNGS: [(&str, u32); 5] =
     [("blue", 0xFF60CDFF), ("pink", 0xFFFF8FC8), ("green", 0xFF7EE08A), ("gold", 0xFFFFC83D), ("white", 0xFFFFFFFF)];
 /// The plate's opacities offered (percent of black), the default first.
-pub const PLATES: [u32; 5] = [60, 0, 20, 40, 80];
+pub const PLATES: [u32; 5] = [0, 20, 40, 60, 80];
 
 /// A line change: the old lines fade out, the new fade in, half of it each.
 const LINE_FADE: f32 = 0.25;
-/// Hovering: the bar shows (unlocked), or the plate fades to this (locked).
+/// Hovering: the bar shows, and the plate is at least `HOVER_WASH` black (unlocked) or fades to
+/// `LOCKED_HOVER` (locked: presses pass through it).
 const HOVER_FADE: f32 = 0.15;
+const HOVER_WASH: f32 = 0.4;
 const LOCKED_HOVER: f32 = 0.7;
 /// How far above the bottom of the main display's work area it opens: an eighth of its height.
 const LIFT: f32 = 0.125;
@@ -119,6 +121,9 @@ impl SongClock {
 pub struct Feed {
     /// The lyrics with the layers the player knows laid under their lines.
     pub lyrics: Option<Arc<Lyrics>>,
+    /// Every line of them is stamped word by word (`Lyrics::word_timed`): only then is the sung
+    /// part swept.
+    pub word_timed: bool,
     /// The face's words, shown while there are no lyrics.
     pub title: String,
     pub artist: String,
@@ -139,6 +144,7 @@ impl PartialEq for Feed {
             _ => false,
         };
         same_lyrics
+            && self.word_timed == o.word_timed
             && self.title == o.title
             && self.artist == o.artist
             && self.layer == o.layer
@@ -175,8 +181,9 @@ impl Link {
 pub struct DesktopLyrics {
     link: Option<Link>,
     sent: Feed,
-    /// The lyrics handed over, and the track's version they were made from.
-    lyrics: (u64, Option<Arc<Lyrics>>),
+    /// The lyrics handed over, the track's version they were made from, and whether they are
+    /// stamped word by word.
+    lyrics: (u64, Option<Arc<Lyrics>>, bool),
     to_player: Sender<FromOverlay>,
     pub from_overlay: Receiver<FromOverlay>,
     wake: Waker,
@@ -189,7 +196,7 @@ impl DesktopLyrics {
         DesktopLyrics {
             link: None,
             sent: Feed::default(),
-            lyrics: (u64::MAX, None),
+            lyrics: (u64::MAX, None, false),
             to_player,
             from_overlay,
             wake: ui.waker(Msg::DesktopLyrics),
@@ -232,7 +239,8 @@ pub fn present(v: &mut Views, ui: &mut Ui, m: &Models) {
     let track = &v.now_playing.track;
     if d.lyrics.0 != track.version() {
         let lyrics = track.as_ref().and_then(|f| f.lyrics.clone().map(|l| l.with_layers(&f.layers.layers)));
-        d.lyrics = (track.version(), lyrics.map(Arc::new));
+        let word_timed = lyrics.as_ref().is_some_and(Lyrics::word_timed);
+        d.lyrics = (track.version(), lyrics.map(Arc::new), word_timed);
     }
     let off = &*v.now_playing.layers_off;
     let carried = d.lyrics.1.as_ref().map(|l| l.layer_ids()).unwrap_or_default();
@@ -240,6 +248,7 @@ pub fn present(v: &mut Views, ui: &mut Ui, m: &Models) {
     let words = v.now_playing.words();
     let feed = Feed {
         lyrics: d.lyrics.1.clone(),
+        word_timed: d.lyrics.2,
         title: words.title.clone(),
         artist: words.artist.clone(),
         layer,
@@ -340,10 +349,12 @@ struct Overlay {
     /// The lines shown, and those coming in while the old fade out (from when).
     shown: Option<Lines>,
     coming: Option<(Lines, f64)>,
+    /// The pointer is over the lines or the bar (`hovered`), over the bar itself (`over_bar`).
     hovered: bool,
+    over_bar: bool,
     /// What the window was last told: its click-through, and whether the look and hover stood
     /// so (`look`).
-    through: bool,
+    through: Option<bool>,
     look: Option<(Look, bool)>,
 }
 
@@ -361,7 +372,8 @@ impl Overlay {
             shown: None,
             coming: None,
             hovered: false,
-            through: false,
+            over_bar: false,
+            through: None,
             look: None,
         }
     }
@@ -431,6 +443,12 @@ impl Overlay {
 
     /// The look, the click-through and the hover's motion, when they changed.
     fn apply_look(&mut self, ui: &mut Ui, look: &Look) {
+        // Locked, presses go through to what is under it, but not on the bar under the pointer.
+        let through = look.locked && !self.over_bar;
+        if self.through != Some(through) {
+            self.through = Some(through);
+            ui.window.set_click_through(through);
+        }
         if self.look.as_ref() == Some(&(look.clone(), self.hovered)) {
             return;
         }
@@ -440,22 +458,24 @@ impl Overlay {
             self.doc.set(ui, "ink", look.ink);
             self.doc.set(ui, "sung", look.sung);
             self.doc.set(ui, "plate", [0.0, 0.0, 0.0, look.plate]);
+            // Over the plate's own black, the wash makes `HOVER_WASH` of it.
+            let wash = if look.plate < HOVER_WASH { 1.0 - (1.0 - HOVER_WASH) / (1.0 - look.plate) } else { 0.0 };
+            self.doc.set(ui, "wash", [0.0, 0.0, 0.0, wash]);
+            let icon = if look.locked { Icon::LockOpen } else { Icon::LockClosed };
+            ui.tree.set_icon(self.doc.id("lock"), icon);
             let stage = ui.window.work_area().map_or(1600.0, |(w, _)| w * 0.9);
             self.doc.set(ui, "stage", stage);
             if was.as_ref().is_none_or(|(l, _)| l.font != look.font) {
                 ui.tree.set_font(look.font.as_deref());
             }
         }
-        if self.through != look.locked || was.is_none() {
-            self.through = look.locked;
-            ui.window.set_click_through(look.locked);
-        }
         let t = ui.now();
-        let bar = if self.hovered && !look.locked { 1.0 } else { 0.0 };
+        let on = |b: bool| if b { 1.0 } else { 0.0 };
         let plate = if self.hovered && look.locked { LOCKED_HOVER } else { 1.0 };
-        let (b, p) = (self.doc.id("bar"), self.doc.id("plate"));
-        ui.tree.animate(b, Prop::Opacity, bar, HOVER_FADE, Ease::Linear, t);
+        let (b, p, w) = (self.doc.id("bar"), self.doc.id("plate"), self.doc.id("wash"));
+        ui.tree.animate(b, Prop::Opacity, on(self.hovered), HOVER_FADE, Ease::Linear, t);
         ui.tree.animate(p, Prop::Opacity, plate, HOVER_FADE, Ease::Linear, t);
+        ui.tree.animate(w, Prop::Opacity, on(self.hovered && !look.locked), HOVER_FADE, Ease::Linear, t);
     }
 
     /// The play button shows what a press does.
@@ -465,8 +485,8 @@ impl Overlay {
     }
 }
 
-/// The lines at `pos`, how far the first is sung (chars; -1: not yet), and when the next line
-/// starts.
+/// The lines at `pos`, how far the first is sung (chars; -1: none, as before it starts or in
+/// lyrics not stamped word by word), and when the next line starts.
 fn lines_at(feed: &Feed, pos: Duration) -> (Lines, f32, Option<Duration>) {
     let none = |first: &str, second: &str| Lines {
         group: None,
@@ -497,19 +517,10 @@ fn lines_at(feed: &Feed, pos: Duration) -> (Lines, f32, Option<Duration>) {
     if started.is_none() {
         return lines_from(-1.0, Some(g.at));
     }
-    let sung = sung(g, pos, next.map(|n| n.at), first.chars().count());
-    lines_from(sung, next.map(|n| n.at).filter(|at| *at > pos))
-}
-
-/// Chars of a group's first line sung at `pos`: by its words where they are stamped, else
-/// evenly over its time (`Group::timing`).
-fn sung(g: &crate::library::Group, pos: Duration, end: Option<Duration>, chars: usize) -> f32 {
-    if let Some(s) = g.sung(pos, end) {
-        return s;
-    }
-    let Some(&(_, from, to)) = g.timing(end).first() else { return chars as f32 };
-    let k = if to > from { ((pos.as_secs_f32() - from) / (to - from)).clamp(0.0, 1.0) } else { 1.0 };
-    k * chars as f32
+    // Swept by its words only where every line is stamped so; else the line stands whole.
+    let end = next.map(|n| n.at);
+    let sung = if feed.word_timed { g.sung(pos, end).unwrap_or(-1.0) } else { -1.0 };
+    lines_from(sung, end.filter(|at| *at > pos))
 }
 
 impl App for Overlay {
@@ -534,10 +545,13 @@ impl App for Overlay {
                 self.now = self.feed.locked().clone();
                 self.play_icon(ui);
             }
-            Event::Message(_) => {}
             Event::Click { action: Some(a), .. } => {
                 let size = self.now.look.as_ref().map_or(SIZES[0] as f32, |l| l.size);
                 match a.name.as_str() {
+                    "lock" => {
+                        let locked = self.now.look.as_ref().is_some_and(|l| l.locked);
+                        self.tell(format!("set:{LOCKED}:{}", if locked { "off" } else { "on" }));
+                    }
                     "smaller" | "larger" => {
                         if let Some(s) = step_size(size, a.name == "larger") {
                             self.tell(format!("set:{SIZE}:{s}"));
@@ -547,13 +561,16 @@ impl App for Overlay {
                 }
             }
             Event::Hover { id, on } if id == self.doc.id("content") => self.hovered = on,
+            Event::Hover { id, on } if id == self.doc.id("bar") => self.over_bar = on,
             Event::Moved => {
                 if let Some(p) = ui.window.place() {
                     self.tell(format!("set:{PLACE}:{}", place_text(p)));
                 }
             }
-            _ => return,
+            _ => {}
         }
+        // Every turn it is woken, whatever woke it (its own resize too), asks again for what
+        // comes next: a turn that asks for no frame stops the sweep's clock.
         self.present(ui);
     }
 
@@ -565,9 +582,10 @@ impl App for Overlay {
         ui.window.set_size(r.w as f32 / k, r.h as f32 / k);
     }
 
-    /// The plate moves it; the bar's buttons are buttons.
+    /// The plate moves it, unless it is locked; the bar's buttons are buttons.
     fn nc_hit(&self, ui: &Ui, x: i32, y: i32) -> NcHit {
-        if ui.tree.rect(self.doc.id("plate")).contains(x, y) {
+        let locked = self.now.look.as_ref().is_some_and(|l| l.locked);
+        if !locked && ui.tree.rect(self.doc.id("plate")).contains(x, y) {
             NcHit::Caption
         } else {
             NcHit::Client
@@ -621,15 +639,60 @@ mod tests {
         assert_eq!((l.first.as_str(), l.second.as_str(), next), ("three", "", None));
     }
 
-    /// A line without word stamps is swept evenly to the next line; with them, by its words.
+    /// Lyrics stamped word by word are swept by their words; lyrics with a line not stamped so
+    /// are not swept at all (their lines stand whole), nor are they woken for frames.
     #[test]
-    fn a_line_is_swept_by_its_words_else_evenly() {
-        let feed = Feed { lyrics: lrc("[00:00.00]abcd\n[00:04.00]x"), ..Feed::default() };
-        let (_, sweep, _) = lines_at(&feed, Duration::from_secs(1));
-        assert!((sweep - 1.0).abs() < 1e-4, "{sweep}");
-        let feed = Feed { lyrics: lrc("[00:00.00]<00:00.00>ab<00:01.00>cd<00:03.00>\n[00:04.00]x"), ..Feed::default() };
+    fn only_lyrics_stamped_word_by_word_are_swept() {
+        let timed = |text: &str| {
+            let lyrics = lrc(text);
+            Feed { word_timed: lyrics.as_ref().is_some_and(|l| l.word_timed()), lyrics, ..Feed::default() }
+        };
+        let feed = timed(
+            "[00:00.00]<00:00.00>ab<00:01.00>cd<00:03.00>
+[00:04.00]
+[00:05.00]<00:05.00>x",
+        );
         let (_, sweep, _) = lines_at(&feed, Duration::from_millis(2000));
         assert!((sweep - 3.0).abs() < 1e-4, "{sweep}");
+        for text in [
+            "[00:00.00]abcd
+[00:04.00]x",
+            "[00:00.00]<00:00.00>ab<00:01.00>cd<00:03.00>
+[00:04.00]x",
+        ] {
+            let feed = timed(text);
+            assert!(!feed.word_timed, "{text}");
+            let (_, sweep, next) = lines_at(&feed, Duration::from_secs(1));
+            assert_eq!((sweep, next), (-1.0, Some(Duration::from_secs(4))), "{text}");
+        }
+    }
+
+    /// The overlay's own resize (its window follows the lines' size) does not stop the sweep:
+    /// every turn it is woken asks for the next frame again. It used to return early, its clock
+    /// asked nothing that turn and stopped, and the line stood still at its first word until
+    /// the pointer came over it.
+    #[test]
+    fn its_own_resize_does_not_stop_the_sweep() {
+        let mut ui = Ui::new(600, 160, 1.0);
+        let lyrics = lrc("[00:00.00]<00:00.00>ab<00:10.00>cd<00:20.00>
+[00:30.00]<00:30.00>x");
+        let feed = Feed {
+            word_timed: true,
+            lyrics,
+            clock: SongClock { position: Duration::from_secs(5), at: Some(Instant::now()), playing: true },
+            look: Some(Look::of(|_| None)),
+            open: true,
+            ..Feed::default()
+        };
+        let (tx, _rx) = channel();
+        let player = ui.waker(Fed);
+        let mut o = Overlay::new(&mut ui, Arc::new(Mutex::new(feed)), tx, player);
+        o.init(&mut ui);
+        novaui::app::settle(&mut o, &mut ui, 0);
+        assert!(o.clock.ticking(), "sung: frames");
+        o.event(&mut ui, Event::Resized);
+        novaui::app::settle(&mut o, &mut ui, 0);
+        assert!(o.clock.ticking(), "still sung after its resize");
     }
 
     /// − and + step through the sizes offered, and stop at the ends.
@@ -644,7 +707,8 @@ mod tests {
     }
 
     /// The overlay paints its plate and nothing around it: the window is transparent past the
-    /// plate's corners, the plate the settings' black where no text is.
+    /// plate's corners, the plate the settings' black where no text is (60% here; none by
+    /// default).
     #[test]
     fn the_overlay_paints_only_its_plate() {
         let (w, h) = (600, 160);
@@ -652,7 +716,7 @@ mod tests {
         let feed = Feed {
             title: "Title".into(),
             artist: "Artist".into(),
-            look: Some(Look::of(|_| None)),
+            look: Some(Look::of(|k| (k == PLATE).then(|| "60".to_owned()))),
             open: true,
             ..Feed::default()
         };
@@ -662,7 +726,7 @@ mod tests {
         let px = novaui::backend::Backend::readback(&mut be);
         let at = |x: i32, y: i32| px[(y * w + x) as usize];
         assert_eq!(at(0, 0) >> 24, 0, "transparent where nothing paints");
-        // The plate's left edge, half way down its lines: the default 60% black.
+        // The plate's left edge, half way down its lines: 60% black.
         let row = h - 30;
         let first = (0..w).find(|x| at(*x, row) >> 24 != 0).expect("a plate");
         let a = at(first + 4, row) >> 24;

@@ -1524,7 +1524,7 @@ dependencies = [
 [[package]]
 name = "nova-icons"
 version = "0.0.1"
-source = "git+https://github.com/wuuuming/NovaUI.git?rev=dbd629ff8abee8bb9d6db30b112d37eff74b3b2e#dbd629ff8abee8bb9d6db30b112d37eff74b3b2e"
+source = "git+https://github.com/wuuuming/NovaUI.git?rev=3fedcb2f62ceff4cf3a426b352b795339ee542a2#3fedcb2f62ceff4cf3a426b352b795339ee542a2"
 
 [[package]]
 name = "novaplayer"
@@ -1583,7 +1583,7 @@ dependencies = [
 [[package]]
 name = "novaui"
 version = "0.0.1"
-source = "git+https://github.com/wuuuming/NovaUI.git?rev=dbd629ff8abee8bb9d6db30b112d37eff74b3b2e#dbd629ff8abee8bb9d6db30b112d37eff74b3b2e"
+source = "git+https://github.com/wuuuming/NovaUI.git?rev=3fedcb2f62ceff4cf3a426b352b795339ee542a2#3fedcb2f62ceff4cf3a426b352b795339ee542a2"
 dependencies = [
  "ab_glyph",
  "ab_glyph_rasterizer",
@@ -1618,7 +1618,7 @@ dependencies = [
 [[package]]
 name = "novaui-shaders"
 version = "0.0.1"
-source = "git+https://github.com/wuuuming/NovaUI.git?rev=dbd629ff8abee8bb9d6db30b112d37eff74b3b2e#dbd629ff8abee8bb9d6db30b112d37eff74b3b2e"
+source = "git+https://github.com/wuuuming/NovaUI.git?rev=3fedcb2f62ceff4cf3a426b352b795339ee542a2#3fedcb2f62ceff4cf3a426b352b795339ee542a2"
 dependencies = [
  "naga",
 ]

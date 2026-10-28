@@ -393,6 +393,13 @@ impl Lyrics {
         self
     }
 
+    /// Every line is stamped word by word (enhanced LRC): the lyrics can be sung word by word.
+    /// Lines without text (a break) need no stamps.
+    pub fn word_timed(&self) -> bool {
+        let mut lines = self.groups.iter().filter(|g| !g.lines.is_empty()).peekable();
+        lines.peek().is_some() && lines.all(|g| !g.words.is_empty())
+    }
+
     /// The layer ids some group carries, in `LAYER_ORDER`.
     pub fn layer_ids(&self) -> Vec<&'static str> {
         LAYER_ORDER.into_iter().filter(|id| self.groups.iter().any(|g| g.layers.iter().any(|(l, _)| l == id))).collect()
