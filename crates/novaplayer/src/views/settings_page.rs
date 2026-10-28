@@ -893,8 +893,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting { key: dl::SHOWN, choices: desktop_lyrics_choices, apply: |_, _, v| v == Some("on") },
     Setting { key: dl::LOCKED, choices: desktop_lyrics_lock_choices, apply: |_, _, v| v == Some("on") },
     Setting { key: dl::SIZE, choices: desktop_lyrics_size_choices, apply: |ui, _, v| offered(ui, dl::SIZE, v) },
-    Setting { key: dl::INK, choices: desktop_lyrics_ink_choices, apply: |ui, _, v| offered(ui, dl::INK, v) },
-    Setting { key: dl::SUNG, choices: desktop_lyrics_sung_choices, apply: |ui, _, v| offered(ui, dl::SUNG, v) },
+    Setting { key: dl::COLOUR, choices: desktop_lyrics_colour_choices, apply: |ui, _, v| offered(ui, dl::COLOUR, v) },
     Setting { key: dl::PLATE, choices: desktop_lyrics_plate_choices, apply: |ui, _, v| offered(ui, dl::PLATE, v) },
 ];
 
@@ -937,12 +936,8 @@ fn desktop_lyrics_size_choices(ui: &Ui) -> Vec<Choice> {
     named(ui, dl::SIZES.map(|s| s.to_string()), str::to_owned)
 }
 
-fn desktop_lyrics_ink_choices(ui: &Ui) -> Vec<Choice> {
-    named(ui, dl::INKS.map(|(n, _)| n.to_owned()), |n| ui.t(&format!("colour.{n}"), &[]))
-}
-
-fn desktop_lyrics_sung_choices(ui: &Ui) -> Vec<Choice> {
-    named(ui, dl::SUNGS.map(|(n, _)| n.to_owned()), |n| ui.t(&format!("colour.{n}"), &[]))
+fn desktop_lyrics_colour_choices(ui: &Ui) -> Vec<Choice> {
+    named(ui, dl::COLOURS.map(|(n, _)| n.to_owned()), |n| ui.t(&format!("colour.{n}"), &[]))
 }
 
 fn desktop_lyrics_plate_choices(ui: &Ui) -> Vec<Choice> {

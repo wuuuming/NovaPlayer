@@ -27,12 +27,13 @@ Box #root { width: 100%; height: 100%;
         // Unlocked, the pointer over it shows at least a light plate: where it can be dragged.
         Box #wash { position: absolute; left: 0; top: 0; right: 0; bottom: 0; radius: size / 2; bg: $wash; opacity: 0; }
         Column #lines { align: center; gap: size / 3;
-          // The sung part swept in the progress colour, word by word, where every line is stamped so.
+          // White, the sung part swept in the lyrics' colour word by word where every line is stamped
+          // so; other lyrics have the line in it whole.
           // A border, not a glow, keeps it legible over any background.
           // A line wider than the stage wraps (two rows at most), as the lyrics page's do.
-          Text #line { text: $line; max-width: $stage - 2 * size; lines: 2; font-size: size; line: round(size * 1.3); weight: 600; fg: $ink; text-align: center;
-                       sweep: $sweep; sweep-fg: $sung; units: char; u-outline: border, #000000, 0.6; }
-          Text #second { text: $second; max-width: $stage - 2 * size; lines: 2; font-size: size; line: round(size * 1.3); weight: 600; fg: $ink; text-align: center;
+          Text #line { text: $line; max-width: $stage - 2 * size; lines: 2; font-size: size; line: round(size * 1.3); weight: 600; fg: #FFFFFF; text-align: center;
+                       sweep: $sweep; sweep-fg: $colour; units: char; u-outline: border, #000000, 0.6; }
+          Text #second { text: $second; max-width: $stage - 2 * size; lines: 2; font-size: size; line: round(size * 1.3); weight: 600; fg: #FFFFFF; text-align: center;
                          fg-alpha: $second-alpha; shown: $has-second; units: char; u-outline: border, #000000, 0.6; }
         }
       }

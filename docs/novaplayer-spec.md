@@ -104,9 +104,9 @@ taskbar entry, never takes the keyboard, transparent around its plate).
 
 - **On and off:** the button at the left of the row above the progress bar (over the elapsed
   time; lit while they are up), and `设置 › 桌面歌词 › 显示桌面歌词`. Closing the player closes them.
-- **Lines:** the sung line, its sung part swept word by word in the progress colour when every
-  line of the lyrics stamps its words (enhanced LRC); other lyrics show the line whole, unswept.
-  Under it, the translation (else the romanisation)
+- **Lines:** the sung line in white, its sung part swept word by word in the lyrics' colour when
+  every line of the lyrics stamps its words (enhanced LRC); other lyrics have the line in that
+  colour whole. Under it, the translation (else the romanisation)
   when the song carries one and the lyrics page shows it (§3, layers), else the group's own second
   line, else the next line (dimmer). Before the first line it stands unsung; without lyrics, the
   title over the artist. A change of lines fades the old out and the new in (0.25 s).
@@ -125,9 +125,9 @@ taskbar entry, never takes the keyboard, transparent around its plate).
 - **Where it opens:** where it was left, while that is on a display; else centred at the bottom of
   the main display's work area, an eighth of its height up.
 - **Settings (`设置 › 桌面歌词`, from the 播放 heading):** 显示桌面歌词 (关 / 开), 锁定 (关 / 开),
-  字号 (32 default; 24, 28, 36, 40, 48, 56), 文字颜色 (白色 default; 米黄, 天蓝), 进度颜色 (蓝色
-  default; 粉色, 绿色, 金色, 白色), 背景不透明度 (0% default; 20, 40, 60, 80%). The font is the
-  settings' font (§8.1). A change shows at once.
+  字号 (32 default; 24, 28, 36, 40, 48, 56), 歌词颜色 (蓝色 default; 粉色, 绿色, 金色, 白色),
+  背景不透明度 (0% default; 20, 40, 60, 80%). The font is the settings' font (§8.1). A change shows
+  at once.
 - **Where an overlay cannot open** (Windows without DirectComposition, an X11 display without a
   32-bit visual) the setting goes back to 关 with a toast saying why. On Wayland it is a layer
   surface where the compositor has the layer shell (KDE, wlroots), else it opens through

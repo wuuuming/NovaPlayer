@@ -24,18 +24,17 @@ const SHEET: &str = include_str!("../../ui/desktop-lyrics.nui");
 pub const SHOWN: &str = "desktop-lyrics";
 pub const LOCKED: &str = "desktop-lyrics-lock";
 pub const SIZE: &str = "desktop-lyrics-size";
-pub const INK: &str = "desktop-lyrics-ink";
-pub const SUNG: &str = "desktop-lyrics-sung";
+/// The lyrics' colour (kept under the key the sung part's colour had).
+pub const COLOUR: &str = "desktop-lyrics-sung";
 pub const PLATE: &str = "desktop-lyrics-plate";
 /// Where it stands once moved (`Place`: `x y`); empty, the default.
 pub const PLACE: &str = "desktop-lyrics-place";
 
 /// The font sizes offered (dips), the default first; − and + step through them in order.
 pub const SIZES: [u32; 7] = [32, 24, 28, 36, 40, 48, 56];
-/// The text's colours offered, the default first.
-pub const INKS: [(&str, u32); 3] = [("white", 0xFFFFFFFF), ("cream", 0xFFFFF3C4), ("sky", 0xFFD2ECFF)];
-/// The sung part's colours offered, the default first.
-pub const SUNGS: [(&str, u32); 5] =
+/// The lyrics' colours offered, the default first: the part sung of lyrics stamped word by word,
+/// the whole line of others; the rest is white.
+pub const COLOURS: [(&str, u32); 5] =
     [("blue", 0xFF60CDFF), ("pink", 0xFFFF8FC8), ("green", 0xFF7EE08A), ("gold", 0xFFFFC83D), ("white", 0xFFFFFFFF)];
 /// The plate's opacities offered (percent of black), the default first.
 pub const PLATES: [u32; 5] = [0, 20, 40, 60, 80];
@@ -57,8 +56,7 @@ const NEXT_ALPHA: f32 = 0.55;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Look {
     pub size: f32,
-    pub ink: Color,
-    pub sung: Color,
+    pub colour: Color,
     /// The plate's black, 0 to 1.
     pub plate: f32,
     pub locked: bool,
@@ -71,15 +69,12 @@ impl Look {
     pub fn of(get: impl Fn(&str) -> Option<String>) -> Look {
         let pick = |key: &str| get(key).filter(|v| !v.is_empty());
         let size = pick(SIZE).and_then(|v| v.parse().ok()).filter(|s| SIZES.contains(s)).unwrap_or(SIZES[0]);
-        let colour = |key: &str, table: &[(&str, u32)]| {
-            let v = pick(key);
-            argb(table.iter().find(|(n, _)| Some(*n) == v.as_deref()).unwrap_or(&table[0]).1)
-        };
+        let colour = pick(COLOUR);
+        let colour = COLOURS.iter().find(|(n, _)| Some(*n) == colour.as_deref()).unwrap_or(&COLOURS[0]).1;
         let plate = pick(PLATE).and_then(|v| v.parse().ok()).filter(|p| PLATES.contains(p)).unwrap_or(PLATES[0]);
         Look {
             size: size as f32,
-            ink: colour(INK, &INKS),
-            sung: colour(SUNG, &SUNGS),
+            colour: argb(colour),
             plate: plate as f32 / 100.0,
             locked: pick(LOCKED).as_deref() == Some("on"),
             font: pick("font"),
@@ -455,8 +450,7 @@ impl Overlay {
         let was = self.look.replace((look.clone(), self.hovered));
         if was.as_ref().is_none_or(|(l, _)| l != look) {
             self.doc.set(ui, "size", look.size);
-            self.doc.set(ui, "ink", look.ink);
-            self.doc.set(ui, "sung", look.sung);
+            self.doc.set(ui, "colour", look.colour);
             self.doc.set(ui, "plate", [0.0, 0.0, 0.0, look.plate]);
             // Over the plate's own black, the wash makes `HOVER_WASH` of it.
             let wash = if look.plate < HOVER_WASH { 1.0 - (1.0 - HOVER_WASH) / (1.0 - look.plate) } else { 0.0 };
@@ -485,8 +479,8 @@ impl Overlay {
     }
 }
 
-/// The lines at `pos`, how far the first is sung (chars; -1: none, as before it starts or in
-/// lyrics not stamped word by word), and when the next line starts.
+/// The lines at `pos`, how far the first is sung (chars; -1: none, as before it starts; lyrics
+/// not stamped word by word have the line sung whole), and when the next line starts.
 fn lines_at(feed: &Feed, pos: Duration) -> (Lines, f32, Option<Duration>) {
     let none = |first: &str, second: &str| Lines {
         group: None,
@@ -517,9 +511,10 @@ fn lines_at(feed: &Feed, pos: Duration) -> (Lines, f32, Option<Duration>) {
     if started.is_none() {
         return lines_from(-1.0, Some(g.at));
     }
-    // Swept by its words only where every line is stamped so; else the line stands whole.
+    // Swept by its words only where every line is stamped so; else the line is lit whole.
     let end = next.map(|n| n.at);
-    let sung = if feed.word_timed { g.sung(pos, end).unwrap_or(-1.0) } else { -1.0 };
+    let whole = first.chars().count() as f32;
+    let sung = if feed.word_timed { g.sung(pos, end).unwrap_or(whole) } else { whole };
     lines_from(sung, end.filter(|at| *at > pos))
 }
 
@@ -640,7 +635,7 @@ mod tests {
     }
 
     /// Lyrics stamped word by word are swept by their words; lyrics with a line not stamped so
-    /// are not swept at all (their lines stand whole), nor are they woken for frames.
+    /// are not swept (the line is lit whole), nor woken for frames.
     #[test]
     fn only_lyrics_stamped_word_by_word_are_swept() {
         let timed = |text: &str| {
@@ -663,7 +658,7 @@ mod tests {
             let feed = timed(text);
             assert!(!feed.word_timed, "{text}");
             let (_, sweep, next) = lines_at(&feed, Duration::from_secs(1));
-            assert_eq!((sweep, next), (-1.0, Some(Duration::from_secs(4))), "{text}");
+            assert_eq!((sweep, next), (4.0, Some(Duration::from_secs(4))), "{text}");
         }
     }
 
