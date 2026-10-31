@@ -127,7 +127,9 @@ fn album_key(path: &Path, album: &str) -> Option<String> {
     if album.is_empty() || crate::plugins::client::parse(path).is_some() {
         return None;
     }
-    let folder = path.parent()?.to_string_lossy().to_lowercase();
+    // A folder's name in any case on Windows (its file system's), as it is elsewhere.
+    let folder = path.parent()?.to_string_lossy();
+    let folder = if cfg!(windows) { folder.to_lowercase() } else { folder.into_owned() };
     Some(disk_cache::key(format!("album\n{folder}\n{}", album.to_lowercase()).as_bytes()))
 }
 
@@ -778,16 +780,20 @@ mod tests {
         assert_eq!(decode(encode(&path, &none).as_bytes(), &path), Some(none));
     }
 
-    /// An album is its folder and its name, in any case; an online song and a song with no
-    /// album have none.
+    /// An album is its folder and its name (the name in any case; the folder in any case where
+    /// the file system's names are, Windows); a song with no album has none.
     #[test]
     fn an_album_is_its_folder_and_its_name() {
-        let a = album_key(Path::new(r"D:\Music\Album\01.flac"), "The Album");
+        let root = std::env::temp_dir();
+        let song = |folder: &str, file: &str| root.join("Music").join(folder).join(file);
+        let a = album_key(&song("Album", "01.flac"), "The Album");
         assert!(a.is_some());
-        assert_eq!(a, album_key(Path::new(r"d:\music\album\02.flac"), " the album "));
-        assert_ne!(a, album_key(Path::new(r"D:\Music\Other\01.flac"), "The Album"), "another folder");
-        assert_ne!(a, album_key(Path::new(r"D:\Music\Album\01.flac"), "Another"), "another album");
-        assert_eq!(album_key(Path::new(r"D:\Music\Album\01.flac"), "  "), None);
+        assert_eq!(a, album_key(&song("Album", "02.flac"), " the album "), "another song, the name in any case");
+        assert_ne!(a, album_key(&song("Other", "01.flac"), "The Album"), "another folder");
+        assert_ne!(a, album_key(&song("Album", "01.flac"), "Another"), "another album");
+        assert_eq!(album_key(&song("Album", "01.flac"), "  "), None);
+        let other_case = album_key(&song("ALBUM", "01.flac"), "The Album");
+        assert_eq!(a == other_case, cfg!(windows), "the folder's case counts where the file system's does");
     }
 
     /// A small picture's face is the picture itself (its pixels as they came, for every song
