@@ -99,3 +99,86 @@ pub mod layer_setting {
         off.iter().map(|l| format!("{l}\n")).collect()
     }
 }
+
+/// Where the window and its side panel were when the player last ran (`NovaPlayer/window.txt`,
+/// `key value` lines as `settings.txt`): the window's bounds (novaui's, kept as handed out), the
+/// side panel open or folded, its page, and the queue's top row. A second-level page (a search,
+/// a narrowing, the song's info) and the settings page are not kept: the player opens on the
+/// first level.
+pub mod window_state {
+    use crate::views::side_panel::Page;
+    use novaui::platform::Bounds;
+
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub struct WindowState {
+        pub bounds: Option<Bounds>,
+        pub panel_open: bool,
+        pub page: Page,
+        /// The queue's top row (rows from the list's start; a fraction is a row part scrolled).
+        pub queue_top: f32,
+    }
+
+    pub fn file() -> Option<std::path::PathBuf> {
+        crate::data_dir().map(|d| d.join("window.txt"))
+    }
+
+    /// The kept state; `None`: none kept (the first run).
+    pub fn load() -> Option<WindowState> {
+        let f = super::SettingsFile::at(Some(file()?));
+        let panel_open = match f.get("panel")? {
+            "open" => true,
+            "folded" => false,
+            _ => return None,
+        };
+        Some(WindowState {
+            bounds: f.get("bounds").and_then(Bounds::parse),
+            panel_open,
+            page: if f.get("page") == Some("lyrics") { Page::Lyrics } else { Page::Queue },
+            queue_top: f
+                .get("queue-top")
+                .and_then(|v| v.parse().ok())
+                .filter(|v: &f32| v.is_finite())
+                .unwrap_or(0.0)
+                .max(0.0),
+        })
+    }
+
+    /// The file's text (`app::kept`).
+    pub fn text(s: &WindowState) -> String {
+        let mut out = String::new();
+        if let Some(b) = s.bounds {
+            out += &format!("bounds {}\n", b.text());
+        }
+        out += &format!("panel {}\n", if s.panel_open { "open" } else { "folded" });
+        out += &format!("page {}\n", if s.page == Page::Lyrics { "lyrics" } else { "queue" });
+        out += &format!("queue-top {:.2}\n", s.queue_top);
+        out
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// What is written is read back as it was; a file of another shape is no state.
+        #[test]
+        fn window_state_round_trips() {
+            let dir = std::env::temp_dir().join(format!("np-window-state-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("window.txt");
+            let s = WindowState {
+                bounds: Some(Bounds { x: -2460, y: 150, width: 1350, height: 960, maximized: true }),
+                panel_open: true,
+                page: Page::Lyrics,
+                queue_top: 12.5,
+            };
+            std::fs::write(&path, text(&s)).unwrap();
+            let f = crate::app::settings::SettingsFile::at(Some(path.clone()));
+            assert_eq!(f.get("bounds"), Some("-2460 150 1350 960 1"));
+            assert_eq!(Bounds::parse(f.get("bounds").unwrap()), s.bounds);
+            assert_eq!(f.get("queue-top"), Some("12.50"));
+            assert_eq!(Bounds::parse("1 2 0 4 0"), None, "no size, no bounds");
+            assert_eq!(Bounds::parse("1 2 3"), None);
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+}

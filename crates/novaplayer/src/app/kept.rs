@@ -24,18 +24,28 @@ pub enum Kept {
     Effects,
     /// The playlists, their index, the queue's place in them.
     Lists,
+    /// `window.txt`: where the window and its side panel were (`settings::window_state`).
+    Window,
 }
 
 impl Kept {
-    pub const ALL: [Kept; 7] =
-        [Kept::Settings, Kept::Options, Kept::Output, Kept::Layers, Kept::Volume, Kept::Effects, Kept::Lists];
+    pub const ALL: [Kept; 8] = [
+        Kept::Settings,
+        Kept::Options,
+        Kept::Output,
+        Kept::Layers,
+        Kept::Volume,
+        Kept::Effects,
+        Kept::Lists,
+        Kept::Window,
+    ];
 
     /// How long after its first change it is written (seconds): a choice at once, what a drag
     /// or playing moves later.
     fn after(self) -> f64 {
         match self {
             Kept::Settings | Kept::Options | Kept::Output | Kept::Layers => 0.0,
-            Kept::Volume => 1.0,
+            Kept::Volume | Kept::Window => 1.0,
             Kept::Effects | Kept::Lists => 2.0,
         }
     }
@@ -139,6 +149,9 @@ impl super::Player {
                 }
             }
             Kept::Lists => self.save_now(),
+            Kept::Window => {
+                file(super::settings::window_state::file(), super::settings::window_state::text(&self.window_state))
+            }
         }
     }
 }

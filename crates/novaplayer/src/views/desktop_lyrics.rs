@@ -30,10 +30,13 @@ pub const PLATE: &str = "desktop-lyrics-plate";
 /// Where it stands once moved (`Place`: `x y`); empty, the default.
 pub const PLACE: &str = "desktop-lyrics-place";
 
-/// The font sizes offered (dips), the default first; − and + step through them in order.
+/// The font sizes offered (dips), the default first; − and + step through them in order. A size
+/// typed in `SIZE_RANGE` is kept too.
 pub const SIZES: [u32; 7] = [32, 24, 28, 36, 40, 48, 56];
+pub const SIZE_RANGE: std::ops::RangeInclusive<u32> = 12..=120;
 /// The lyrics' colours offered, the default first: the part sung of lyrics stamped word by word,
-/// the whole line of others; the rest is white.
+/// the whole line of others; the rest is white. A colour typed as `#RRGGBB` (or `#RGB`) is kept
+/// too.
 pub const COLOURS: [(&str, u32); 5] =
     [("blue", 0xFF60CDFF), ("pink", 0xFFFF8FC8), ("green", 0xFF7EE08A), ("gold", 0xFFFFC83D), ("white", 0xFFFFFFFF)];
 /// The plate's opacities offered (percent of black), the default first.
@@ -68,9 +71,8 @@ impl Look {
     /// The look the settings name; a value not offered is the default.
     pub fn of(get: impl Fn(&str) -> Option<String>) -> Look {
         let pick = |key: &str| get(key).filter(|v| !v.is_empty());
-        let size = pick(SIZE).and_then(|v| v.parse().ok()).filter(|s| SIZES.contains(s)).unwrap_or(SIZES[0]);
-        let colour = pick(COLOUR);
-        let colour = COLOURS.iter().find(|(n, _)| Some(*n) == colour.as_deref()).unwrap_or(&COLOURS[0]).1;
+        let size = pick(SIZE).as_deref().and_then(size_of).unwrap_or(SIZES[0]);
+        let colour = pick(COLOUR).as_deref().and_then(colour_of).unwrap_or(COLOURS[0].1);
         let plate = pick(PLATE).and_then(|v| v.parse().ok()).filter(|p| PLATES.contains(p)).unwrap_or(PLATES[0]);
         Look {
             size: size as f32,
@@ -80,6 +82,41 @@ impl Look {
             font: pick("font"),
         }
     }
+}
+
+/// The size `v` names: a whole number of dips in `SIZE_RANGE`.
+pub fn size_of(v: &str) -> Option<u32> {
+    v.trim().parse().ok().filter(|s| SIZE_RANGE.contains(s))
+}
+
+/// The colour `v` names (ARGB): one offered by its name, or `#RRGGBB` / `#RGB` (the `#` may be
+/// left out).
+pub fn colour_of(v: &str) -> Option<u32> {
+    let v = v.trim();
+    if let Some((_, c)) = COLOURS.iter().find(|(n, _)| *n == v) {
+        return Some(*c);
+    }
+    let hex = v.strip_prefix('#').unwrap_or(v);
+    if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let rgb = match hex.len() {
+        6 => u32::from_str_radix(hex, 16).ok()?,
+        3 => hex.chars().fold(0, |a, c| (a << 8) | (c.to_digit(16).unwrap_or(0) * 0x11)),
+        _ => return None,
+    };
+    Some(0xFF00_0000 | rgb)
+}
+
+/// A typed colour as kept: `#RRGGBB`, upper case (`None`: not one; a name is one of the rows).
+pub fn typed_colour(v: &str) -> Option<String> {
+    let named = COLOURS.iter().any(|(n, _)| *n == v.trim());
+    colour_of(v).filter(|_| !named).map(|c| format!("#{:06X}", c & 0xFF_FFFF))
+}
+
+/// A typed size as kept (`None`: not one in `SIZE_RANGE`).
+pub fn typed_size(v: &str) -> Option<String> {
+    size_of(v).map(|s| s.to_string())
 }
 
 /// The next size offered after `size` toward larger (`up`) or smaller ones, if there is one.
@@ -612,7 +649,7 @@ mod tests {
         Lyrics::parse(text).map(Arc::new)
     }
 
-    /// The second line is the layer shown, else the group's own second line, else the next
+    /// The second line is the layer shown (a line stamped under the line is one), else the next
     /// line; before the first line, the first stands unsung.
     #[test]
     fn the_second_line_is_the_translation_else_the_next_line() {
@@ -623,6 +660,13 @@ mod tests {
         assert_eq!((l.first.as_str(), l.second.as_str(), sweep, next), ("one", "two", -1.0, Some(s(1))));
         let (l, ..) = lines_at(&feed, s(1));
         assert_eq!((l.first.as_str(), l.second.as_str(), l.second_alpha), ("one", "two", NEXT_ALPHA));
+        let (l, ..) = lines_at(&feed, s(4));
+        assert_eq!(
+            (l.first.as_str(), l.second.as_str(), l.second_alpha),
+            ("two", "three", NEXT_ALPHA),
+            "its layer not shown"
+        );
+        feed.layer = Some("trans".into());
         let (l, ..) = lines_at(&feed, s(4));
         assert_eq!((l.first.as_str(), l.second.as_str(), l.second_alpha), ("two", "deux", LAYER_ALPHA));
         let layers = [crate::library::Layer { id: "trans".into(), name: "t".into(), lrc: "[00:01.00]un".into() }];
@@ -697,8 +741,27 @@ mod tests {
         assert_eq!(step_size(32.0, false), Some(28));
         assert_eq!(step_size(56.0, true), None);
         assert_eq!(step_size(24.0, false), None);
-        let look = Look::of(|k| (k == SIZE).then(|| "31".to_owned()));
-        assert_eq!(look.size, SIZES[0] as f32, "a size not offered is the default");
+        assert_eq!(step_size(31.0, true), Some(32), "from a typed size, the next offered");
+        let size = |v: &str| Look::of(|k| (k == SIZE).then(|| v.to_owned())).size;
+        assert_eq!(size("31"), 31.0, "a typed size in range is kept");
+        for bad in ["8", "500", "big", ""] {
+            assert_eq!(size(bad), SIZES[0] as f32, "{bad:?}: the default");
+        }
+    }
+
+    /// A colour by its name or typed as hex (with or without `#`, six or three digits); anything
+    /// else is the default.
+    #[test]
+    fn a_colour_is_named_or_typed() {
+        let colour = |v: &str| Look::of(|k| (k == COLOUR).then(|| v.to_owned())).colour;
+        assert_eq!(colour("pink"), argb(0xFFFF8FC8));
+        assert_eq!(colour("#FF8800"), argb(0xFFFF8800));
+        assert_eq!(colour("ff8800"), argb(0xFFFF8800));
+        assert_eq!(colour("#f80"), argb(0xFFFF8800));
+        assert_eq!(colour("#12345"), argb(COLOURS[0].1), "five digits: the default");
+        assert_eq!(colour("purple-ish"), argb(COLOURS[0].1));
+        assert_eq!(typed_colour("#f80").as_deref(), Some("#FF8800"));
+        assert_eq!(typed_colour("pink"), None, "a name is a row, not a typed colour");
     }
 
     /// The overlay paints its plate and nothing around it: the window is transparent past the

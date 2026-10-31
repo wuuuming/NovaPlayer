@@ -131,6 +131,8 @@ pub struct Player {
     pub desktop_lyrics: crate::views::desktop_lyrics::DesktopLyrics,
     /// The kept files changed and not yet written (`kept`).
     pub keeping: kept::Keeping,
+    /// Where the window and its side panel are, as last marked to keep (`Kept::Window`).
+    pub window_state: settings::window_state::WindowState,
     pub toast: crate::views::toast::Toast,
     pub transport: crate::views::transport::Transport,
     pub plugin: crate::plugins::Plugins,
@@ -193,6 +195,18 @@ impl Player {
         now_playing.layers_off = novaui::Model::new(layer_setting::get());
         let track = now_playing.track.subscribe(Msg::Track);
         let mut side_panel = SidePanel::new(ui, layer_setting::get());
+        // Where the side panel was when the player last ran (the window's bounds were the
+        // window's own, `lib.rs`).
+        let kept_window = settings::window_state::load();
+        if let Some(k) = &kept_window {
+            side_panel.restore(k.panel_open, k.page, k.queue_top);
+        }
+        let window_state = settings::window_state::WindowState {
+            bounds: ui.window.bounds(),
+            panel_open: side_panel.shown.open,
+            page: side_panel.shown.page,
+            queue_top: kept_window.map_or(0.0, |k| k.queue_top),
+        };
         let mut play_state = Model::new(());
         let controls = [
             side_panel.shown.subscribe(Msg::Controls),
@@ -240,6 +254,7 @@ impl Player {
                 shown_list: Queue::default(),
                 playing_list: None,
                 list_version: 1,
+                warmed: 0,
                 sort_waiting: None,
                 tag_fill: None,
                 tasks: Default::default(),
@@ -256,6 +271,7 @@ impl Player {
             settings,
             desktop_lyrics: crate::views::desktop_lyrics::DesktopLyrics::new(ui),
             keeping: kept::Keeping::new(ui.clock(Msg::Keep)),
+            window_state,
             toast: crate::views::toast::Toast::new(ui),
             transport: crate::views::transport::Transport::new(ui),
             plugin: crate::plugins::Plugins {
@@ -550,6 +566,7 @@ impl Player {
     /// the flush (`Msg::Present`), after everything the turn delivered.
     fn turn(&mut self, ui: &mut Ui) {
         self.drain_jobs(ui);
+        self.warm_index();
         let (was_ended, was_playing) = (self.playback.snap.ended, self.playback.snap.playing);
         let fresh = self.playback.engine.snapshot();
         if fresh.version != self.playback.song_version {
@@ -627,7 +644,10 @@ impl Player {
         let devices = self.playback.engine.devices.load(std::sync::atomic::Ordering::Relaxed);
         if devices != self.playback.devices_listed {
             self.playback.devices_listed = devices;
-            if self.views(|v, _| crate::views::menus::output::is_up(v)) {
+            let shown = self.views(|v, _| {
+                crate::views::menus::output::is_up(v) || crate::views::menus::output::drop_up(v).is_some()
+            });
+            if shown || self.settings_page.open {
                 self.list_outputs(ui);
             }
         }
@@ -646,6 +666,7 @@ impl Player {
         self.present(ui);
         self.effects_turn(ui);
         self.note_volume();
+        self.note_window(ui);
         for what in self.keeping.due(ui.now()) {
             self.keep(what);
         }
@@ -699,6 +720,20 @@ impl Player {
 }
 
 impl Player {
+    /// The window and side panel as they are now: kept (`Kept::Window`) when they changed.
+    fn note_window(&mut self, ui: &Ui) {
+        let now = settings::window_state::WindowState {
+            bounds: ui.window.bounds().or(self.window_state.bounds),
+            panel_open: self.side_panel.shown.open,
+            page: self.side_panel.kept_page(),
+            queue_top: self.side_panel.kept_top(),
+        };
+        if now != self.window_state {
+            self.window_state = now;
+            self.keeping.changed(kept::Kept::Window);
+        }
+    }
+
     /// Saves what must outlive the process: every kept file changed and not yet written, the
     /// queue and its position, the volume and the effects chain as they are, then waits for the
     /// store's thread to have written them. On close (`Drop`) and on a panic (`crate::crash`).
@@ -718,5 +753,42 @@ impl Drop for Player {
     fn drop(&mut self) {
         crate::crash::forget(self);
         self.rescue();
+    }
+}
+
+impl Player {
+    /// 复制: the playing song's words on the clipboard, with a toast saying so. A lyric group
+    /// is its lines with the layers shown under them (`layers_off` not); the lyrics, every
+    /// group so, a blank line between.
+    pub fn copy(&mut self, ui: &mut Ui, what: command::CopyWhat) {
+        use command::CopyWhat as C;
+        let Some(t) = self.now_playing.track.as_ref() else { return };
+        let group = |g: &crate::library::Group| {
+            let mut out = g.lines.join("\n");
+            for (layer, text) in &g.layers {
+                if !self.now_playing.layers_off.contains(layer) && !text.is_empty() {
+                    out.push('\n');
+                    out.push_str(text);
+                }
+            }
+            out
+        };
+        let lyrics = self.shown_lyrics();
+        let text = match what {
+            C::Title => t.title.clone(),
+            C::Artist => t.artist.clone(),
+            C::Album => t.album.clone(),
+            C::TitleArtist => format!("{} - {}", t.title, t.artist),
+            C::Line(g) => lyrics.as_ref().and_then(|l| l.groups.get(g)).map(group).unwrap_or_default(),
+            C::Lyrics => lyrics
+                .as_ref()
+                .map(|l| l.groups.iter().map(group).filter(|s| !s.trim().is_empty()).collect::<Vec<_>>().join("\n\n"))
+                .unwrap_or_default(),
+        };
+        if text.trim().is_empty() {
+            return;
+        }
+        ui.write_clipboard(text);
+        self.toast(ui, ui.t("toast.copied", &[]));
     }
 }

@@ -143,8 +143,22 @@ fn fetch(url: &str, sha256: &str, path: &Path) -> bool {
     std::fs::rename(&part, path).is_ok() || sha256_of(path).as_deref() == Some(sha256)
 }
 
+/// The Windows program's manifest (`novaplayer.manifest`: the segment heap), embedded by the
+/// linker in the programs this package builds (not its tests).
+fn manifest() {
+    println!("cargo:rerun-if-changed=novaplayer.manifest");
+    let msvc = std::env::var("CARGO_CFG_TARGET_ENV").is_ok_and(|e| e == "msvc");
+    let windows = std::env::var("CARGO_CFG_TARGET_OS").is_ok_and(|o| o == "windows");
+    let Some(dir) = std::env::var_os("CARGO_MANIFEST_DIR").map(PathBuf::from) else { return };
+    if windows && msvc {
+        println!("cargo:rustc-link-arg-bins=/MANIFEST:EMBED");
+        println!("cargo:rustc-link-arg-bins=/MANIFESTINPUT:{}", dir.join("novaplayer.manifest").display());
+    }
+}
+
 fn main() {
     revisions();
+    manifest();
     // The backdrop's GPU program, compiled now (novaui-shaders): no shader compiler in the program.
     novaui_shaders::build_effect("field", "src/views/field.wgsl", "np_field");
     // OUT_DIR is <target>/<profile>/build/<pkg>-<hash>/out: the program goes three levels up,

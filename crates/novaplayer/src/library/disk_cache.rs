@@ -1,11 +1,10 @@
-//! Files kept on disk by a source's key, under a budget: the queue rows' words and thumbnails
-//! (`row_cache`) and the plugins' faces (`plugins::client`). An entry is a few files of one
-//! key in its group's folder (a song's folder, a plugin), and may name one shared file, a blob
-//! kept once by its content (a thumbnail many songs of an album show).
+//! Files kept on disk by a key, under a budget: the library index's records and pictures
+//! (`index`) and the plugins' faces (`plugins::client`). An entry is a few files of one key in
+//! its group's folder (a song's folder, a plugin, the pictures).
 //!
-//! What is kept, by key, with each file's size, the blob it names and when it was last used, is
-//! held in memory, read from the folder's listing once (`open`): a file's name says its key and
-//! its blob, so no record is read to know it. Eviction (the least recently used entries first,
+//! What is kept, by key, with each file's size and when it was last used, is held in memory,
+//! read from the folder's listing once (`open`): a file's name says its key, so no record is read
+//! to know it. Eviction (the least recently used entries first,
 //! once the budget or the count is passed, down to nine tenths of them) and forgetting a group
 //! work from it alone. Reads and writes of the files are the callers', outside the lock.
 
@@ -16,33 +15,18 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
 
-/// The folder shared files are kept in.
-const BLOBS: &str = "blobs";
-
 /// One entry's files.
 struct Entry {
     group: String,
-    /// The blob it names (its files' names carry it).
-    blob: Option<String>,
     /// Its files: extension, size.
     files: Vec<(String, u64)>,
     /// When it was last used (a count; a file's time at `open`).
     used: u64,
 }
 
-/// A shared file: its extension, size, and how many entries name it.
-#[derive(Default)]
-struct Blob {
-    ext: String,
-    len: u64,
-    refs: usize,
-}
-
 #[derive(Default)]
 struct Index {
     entries: HashMap<String, Entry>,
-    /// Shared files.
-    blobs: HashMap<String, Blob>,
     /// Every file's size, together.
     total: u64,
     clock: u64,
@@ -56,8 +40,8 @@ pub struct DiskCache {
 }
 
 /// The key of `bytes` (a path's, a folder's, a picture's): the first half of their SHA-256, in
-/// hex. Half keeps a kept file's path well inside Windows' 260 characters (a group, a key and a
-/// blob in one name) with no collision in sight.
+/// hex. Half keeps a kept file's path well inside Windows' 260 characters (a group and a key in
+/// one name) with no collision in sight.
 pub fn key(bytes: &[u8]) -> String {
     use std::fmt::Write;
     let mut hex = String::with_capacity(32);
@@ -82,14 +66,9 @@ pub fn path_key(path: &Path) -> String {
     }
 }
 
-/// Where shared file `blob` with extension `ext` is kept.
-fn blob_path(root: &Path, blob: &str, ext: &str) -> PathBuf {
-    root.join(BLOBS).join(format!("{blob}.{ext}"))
-}
-
-/// Where entry `key`'s `ext` file (naming `blob`) is kept in `group`.
-fn entry_path(root: &Path, group: &str, key: &str, blob: Option<&str>, ext: &str) -> PathBuf {
-    root.join(group).join(file_name(key, blob, ext))
+/// Where entry `key`'s `ext` file is kept in `group`.
+fn entry_path(root: &Path, group: &str, key: &str, ext: &str) -> PathBuf {
+    root.join(group).join(format!("{key}.{ext}"))
 }
 
 impl Index {
@@ -97,22 +76,6 @@ impl Index {
     fn tick(&mut self) -> u64 {
         self.clock += 1;
         self.clock
-    }
-
-    /// A shared file no entry names goes: out of the map, its size out of the total, its file
-    /// deleted.
-    fn drop_blob(&mut self, root: &Path, b: &str) {
-        if let Some(blob) = self.blobs.remove(b) {
-            let _ = std::fs::remove_file(blob_path(root, b, &blob.ext));
-            self.total = self.total.saturating_sub(blob.len);
-        }
-    }
-}
-
-fn file_name(key: &str, blob: Option<&str>, ext: &str) -> String {
-    match blob {
-        Some(b) => format!("{key}.{b}.{ext}"),
-        None => format!("{key}.{ext}"),
     }
 }
 
@@ -133,38 +96,20 @@ impl DiskCache {
                 let Ok(m) = f.metadata() else { continue };
                 let name = f.file_name().to_string_lossy().into_owned();
                 let parts: Vec<&str> = name.split('.').collect();
-                index.total += m.len();
-                index.clock = index.clock.max(time(&m));
-                if gname == BLOBS {
-                    if let [b, ext] = parts[..] {
-                        let blob = index.blobs.entry(b.to_owned()).or_default();
-                        (blob.ext, blob.len) = (ext.to_owned(), m.len());
-                    }
+                let [k, ext] = parts[..] else { continue };
+                if !hex(k) {
                     continue;
                 }
-                let (k, blob, ext) = match parts[..] {
-                    [k, ext] if hex(k) => (k, None, ext),
-                    [k, b, ext] if hex(k) && hex(b) => (k, Some(b), ext),
-                    _ => continue,
-                };
+                index.total += m.len();
+                index.clock = index.clock.max(time(&m));
                 let e = index.entries.entry(k.to_owned()).or_insert_with(|| Entry {
                     group: gname.clone(),
-                    blob: blob.map(str::to_owned),
                     files: Vec::new(),
                     used: 0,
                 });
                 e.files.push((ext.to_owned(), m.len()));
                 e.used = e.used.max(time(&m));
             }
-        }
-        let names: Vec<String> = index.entries.values().filter_map(|e| e.blob.clone()).collect();
-        for b in names {
-            index.blobs.entry(b).or_default().refs += 1;
-        }
-        // A shared file no entry names (a crash between its write and its entry's) goes.
-        let orphans: Vec<String> = index.blobs.iter().filter(|(_, b)| b.refs == 0).map(|(k, _)| k.clone()).collect();
-        for b in orphans {
-            index.drop_blob(&root, &b);
         }
         let cache = DiskCache { root, budget, max_entries, index: Mutex::new(index) };
         cache.trim(&mut cache.index.locked());
@@ -178,32 +123,21 @@ impl DiskCache {
         let e = ix.entries.get_mut(key)?;
         e.files.iter().any(|(x, _)| x == ext).then_some(())?;
         e.used = clock;
-        Some(entry_path(&self.root, &e.group, key, e.blob.as_deref(), ext))
+        Some(entry_path(&self.root, &e.group, key, ext))
     }
 
-    /// The blob entry `key` names, and where its `ext` file is.
-    pub fn blob_of(&self, key: &str, ext: &str) -> Option<(String, PathBuf)> {
-        let b = self.index.locked().entries.get(key)?.blob.clone()?;
-        let path = blob_path(&self.root, &b, ext);
-        Some((b, path))
-    }
-
-    /// Keeps entry `key`'s `ext` file in `group`, naming `blob` (written before by `put_blob`):
-    /// written whole or not at all. Its other files go when the blob it names changes.
-    pub fn put(&self, group: &str, key: &str, ext: &str, bytes: &[u8], blob: Option<&str>) -> std::io::Result<()> {
+    /// Keeps entry `key`'s `ext` file in `group`: written whole or not at all. An entry kept in
+    /// another group moves (its old files go).
+    pub fn put(&self, group: &str, key: &str, ext: &str, bytes: &[u8]) -> std::io::Result<()> {
         std::fs::create_dir_all(self.root.join(group))?;
-        crate::files::write_atomic(&entry_path(&self.root, group, key, blob, ext), bytes)?;
+        crate::files::write_atomic(&entry_path(&self.root, group, key, ext), bytes)?;
         let mut ix = self.index.locked();
-        let moved = ix.entries.get(key).is_some_and(|e| e.group != group || e.blob.as_deref() != blob);
-        if moved {
-            // Another group or blob: the entry's old files go (their names say the old ones).
+        if ix.entries.get(key).is_some_and(|e| e.group != group) {
             self.drop_entry(&mut ix, key);
         }
         let clock = ix.tick();
-        let added = blob.is_some() && !ix.entries.contains_key(key);
         let e = ix.entries.entry(key.to_owned()).or_insert_with(|| Entry {
             group: group.to_owned(),
-            blob: blob.map(str::to_owned),
             files: Vec::new(),
             used: clock,
         });
@@ -217,29 +151,7 @@ impl DiskCache {
             }
         };
         ix.total = ix.total + len - was;
-        if let (true, Some(b)) = (added, blob) {
-            ix.blobs.entry(b.to_owned()).or_default().refs += 1;
-        }
         self.trim(&mut ix);
-        Ok(())
-    }
-
-    /// Keeps a shared file by its content's key, unless it is kept already with these bytes.
-    pub fn put_blob(&self, blob: &str, ext: &str, bytes: &[u8]) -> std::io::Result<()> {
-        let path = blob_path(&self.root, blob, ext);
-        // Kept already, whole (a damaged file is written again).
-        if std::fs::metadata(&path).is_ok_and(|m| m.len() == bytes.len() as u64)
-            && self.index.locked().blobs.contains_key(blob)
-        {
-            return Ok(());
-        }
-        std::fs::create_dir_all(self.root.join(BLOBS))?;
-        crate::files::write_atomic(&path, bytes)?;
-        let mut ix = self.index.locked();
-        let old = ix.blobs.entry(blob.to_owned()).or_default();
-        old.ext = ext.to_owned();
-        let was = std::mem::replace(&mut old.len, bytes.len() as u64);
-        ix.total = ix.total + bytes.len() as u64 - was;
         Ok(())
     }
 
@@ -254,7 +166,7 @@ impl DiskCache {
         let Some(e) = ix.entries.get_mut(key) else { return };
         let Some(k) = e.files.iter().position(|(x, _)| x == ext) else { return };
         let (_, len) = e.files.remove(k);
-        let path = entry_path(&self.root, &e.group, key, e.blob.as_deref(), ext);
+        let path = entry_path(&self.root, &e.group, key, ext);
         let _ = std::fs::remove_file(path);
         ix.total = ix.total.saturating_sub(len);
         if ix.entries.get(key).is_some_and(|e| e.files.is_empty()) {
@@ -281,16 +193,8 @@ impl DiskCache {
     fn drop_entry(&self, ix: &mut Index, key: &str) {
         let Some(e) = ix.entries.remove(key) else { return };
         for (ext, len) in &e.files {
-            let _ = std::fs::remove_file(entry_path(&self.root, &e.group, key, e.blob.as_deref(), ext));
+            let _ = std::fs::remove_file(entry_path(&self.root, &e.group, key, ext));
             ix.total = ix.total.saturating_sub(*len);
-        }
-        let Some(b) = e.blob else { return };
-        let gone = ix.blobs.get_mut(&b).is_some_and(|r| {
-            r.refs = r.refs.saturating_sub(1);
-            r.refs == 0
-        });
-        if gone {
-            ix.drop_blob(&self.root, &b);
         }
     }
 
@@ -310,11 +214,34 @@ impl DiskCache {
             self.drop_entry(ix, &k);
         }
     }
+}
 
-    /// What is kept, together, and how many entries (tests).
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn size(&self) -> (u64, usize, usize) {
-        let ix = self.index.locked();
-        (ix.total, ix.entries.len(), ix.blobs.len())
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What is kept is found again after a restart (from the listing alone); over the budget
+    /// the least recently used goes first; a group goes together.
+    #[test]
+    fn kept_files_survive_a_restart_and_the_budget_takes_the_least_used() {
+        let root = std::env::temp_dir().join(format!("np-disk-cache-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let keys: Vec<String> = (0..4).map(|k| key(&[k])).collect();
+        {
+            let c = DiskCache::open(root.clone(), 1000, 100);
+            for (k, g) in keys.iter().zip(["a", "a", "b", "b"]) {
+                c.put(g, k, "rec", &[1; 300]).unwrap();
+            }
+            // Three fit; the fourth put trims to nine tenths: the least recently used goes.
+            assert!(c.find(&keys[0], "rec").is_none(), "the oldest went");
+            assert!(keys[1..].iter().all(|k| c.find(k, "rec").is_some()));
+        }
+        let c = DiskCache::open(root.clone(), 1000, 100);
+        assert!(keys[1..].iter().all(|k| c.find(k, "rec").is_some()), "found again after a restart");
+        assert_eq!(std::fs::read(c.find(&keys[2], "rec").unwrap()).unwrap(), vec![1; 300]);
+        c.forget_group("b");
+        assert!(c.find(&keys[2], "rec").is_none() && c.find(&keys[3], "rec").is_none());
+        assert!(c.find(&keys[1], "rec").is_some(), "another group stays");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

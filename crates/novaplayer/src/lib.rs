@@ -93,6 +93,8 @@ pub fn run() {
             min_height: 300,
             backend,
             accessibility,
+            // Where the window stood when the player last closed (`app::settings::window_state`).
+            bounds: app::settings::window_state::load().and_then(|s| s.bounds),
         },
         move |ui| {
             let mut p = Box::new(app::Player::new(ui));

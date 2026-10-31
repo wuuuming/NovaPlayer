@@ -167,7 +167,7 @@ impl SettingsPage {
         self.open = open;
         self.scroll.jump(0.0);
         let to = if open { 1.0 } else { 0.0 };
-        self.fade = novaui::anim::Tween::new(self.amount, to, ui.now(), FADE.into(), Ease::Bezier(0.1, 0.9, 0.2, 1.0));
+        self.fade.retarget(to, ui.now(), FADE.into(), Ease::Bezier(0.1, 0.9, 0.2, 1.0));
         self.at_rest = false;
         // The menu button is the page's way back while it is up.
         let icon = if open { Icon::ArrowLeft } else { Icon::Navigation };
@@ -879,22 +879,68 @@ pub struct Setting {
     /// Puts a value (`None`: never set) into effect. False: it cannot be (an uninstalled font),
     /// the default is.
     pub apply: fn(&mut Ui, &mut Views, Option<&str>) -> bool,
+    /// What its box takes typed besides its rows (a size, a colour), and the rows' swatches.
+    pub typed: Typed,
+}
+
+/// A `ComboBox`'s typed values and its rows' looks (`menus::dropdown`).
+#[derive(Clone, Copy)]
+pub struct Typed {
+    /// A value typed (Enter) as it is kept, when it is one; it shows in the box as kept.
+    pub value: Option<fn(&str) -> Option<String>>,
+    /// The colour a value shows as (ARGB), a swatch beside its row.
+    pub swatch: Option<fn(&str) -> Option<u32>>,
+}
+
+impl Typed {
+    /// Its rows only, no swatches.
+    pub const ROWS: Typed = Typed { value: None, swatch: None };
+
+    /// `kept` is a value typed (as it is kept), not one of the rows'.
+    pub fn is_typed(&self, kept: &str) -> bool {
+        self.value.is_some_and(|f| f(kept).as_deref() == Some(kept))
+    }
 }
 
 pub const SETTINGS: &[Setting] = &[
-    Setting { key: "locale", choices: locale_choices, apply: apply_locale },
-    Setting { key: "font", choices: font_choices, apply: apply_font },
-    Setting { key: "layout", choices: layout_choices, apply: apply_layout },
-    Setting { key: "lyric-style", choices: lyric_style_choices, apply: apply_lyric_style },
-    Setting { key: "replay-gain", choices: replay_gain_choices, apply: apply_replay_gain },
-    Setting { key: "crossfade", choices: crossfade_choices, apply: apply_crossfade },
-    Setting { key: "keyboard-navigation", choices: keyboard_navigation_choices, apply: apply_keyboard_navigation },
-    Setting { key: "screen-reader", choices: screen_reader_choices, apply: apply_screen_reader },
-    Setting { key: dl::SHOWN, choices: desktop_lyrics_choices, apply: |_, _, v| v == Some("on") },
-    Setting { key: dl::LOCKED, choices: desktop_lyrics_lock_choices, apply: |_, _, v| v == Some("on") },
-    Setting { key: dl::SIZE, choices: desktop_lyrics_size_choices, apply: |ui, _, v| offered(ui, dl::SIZE, v) },
-    Setting { key: dl::COLOUR, choices: desktop_lyrics_colour_choices, apply: |ui, _, v| offered(ui, dl::COLOUR, v) },
-    Setting { key: dl::PLATE, choices: desktop_lyrics_plate_choices, apply: |ui, _, v| offered(ui, dl::PLATE, v) },
+    Setting { key: "locale", choices: locale_choices, apply: apply_locale, typed: Typed::ROWS },
+    Setting { key: "font", choices: font_choices, apply: apply_font, typed: Typed::ROWS },
+    Setting { key: "layout", choices: layout_choices, apply: apply_layout, typed: Typed::ROWS },
+    Setting { key: "lyric-style", choices: lyric_style_choices, apply: apply_lyric_style, typed: Typed::ROWS },
+    Setting { key: "replay-gain", choices: replay_gain_choices, apply: apply_replay_gain, typed: Typed::ROWS },
+    Setting { key: "crossfade", choices: crossfade_choices, apply: apply_crossfade, typed: Typed::ROWS },
+    Setting {
+        key: "keyboard-navigation",
+        choices: keyboard_navigation_choices,
+        apply: apply_keyboard_navigation,
+        typed: Typed::ROWS,
+    },
+    Setting { key: "screen-reader", choices: screen_reader_choices, apply: apply_screen_reader, typed: Typed::ROWS },
+    Setting { key: dl::SHOWN, choices: desktop_lyrics_choices, apply: |_, _, v| v == Some("on"), typed: Typed::ROWS },
+    Setting {
+        key: dl::LOCKED,
+        choices: desktop_lyrics_lock_choices,
+        apply: |_, _, v| v == Some("on"),
+        typed: Typed::ROWS,
+    },
+    Setting {
+        key: dl::SIZE,
+        choices: desktop_lyrics_size_choices,
+        apply: |_, _, v| v.and_then(dl::size_of).is_some_and(|s| s != dl::SIZES[0]),
+        typed: Typed { value: Some(dl::typed_size), swatch: None },
+    },
+    Setting {
+        key: dl::COLOUR,
+        choices: desktop_lyrics_colour_choices,
+        apply: |_, _, v| v.and_then(dl::colour_of).is_some_and(|c| c != dl::COLOURS[0].1),
+        typed: Typed { value: Some(dl::typed_colour), swatch: Some(dl::colour_of) },
+    },
+    Setting {
+        key: dl::PLATE,
+        choices: desktop_lyrics_plate_choices,
+        apply: |ui, _, v| offered(ui, dl::PLATE, v),
+        typed: Typed::ROWS,
+    },
 ];
 
 use crate::views::desktop_lyrics as dl;

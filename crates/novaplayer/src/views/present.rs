@@ -90,6 +90,9 @@ impl Player {
             let (mut v, m) = self.split();
             present_search(&mut v, ui);
             crate::views::menus::dropdown::present_boxes(&mut v, ui);
+            if v.settings_page.open {
+                crate::views::menus::output::present_drops(&mut v, ui, &m);
+            }
             crate::views::import_dialog::present_import(&mut v, ui);
             crate::views::layout::layout_state(&mut v, ui);
             crate::views::transport::update_transport(&mut v, ui, &m);

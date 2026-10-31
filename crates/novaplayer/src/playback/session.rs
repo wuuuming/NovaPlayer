@@ -119,6 +119,9 @@ impl Player {
             self.set_track_text("", "", "", "", false);
         }
         let path = song.path.clone();
+        // A song the index knows has lyrics keeps the lyrics page while they are read (it does
+        // not turn to the queue and back); one not known as such turns as it always did.
+        self.side_panel.expect_lyrics(crate::library::index::lyrics_known(&path) == Some(true));
         // A song of a plugin's list reports its plays (services that ask for them).
         crate::plugins::client::play_event(&self.plugin.accounts, &path, "start", at);
         let task = if crate::plugins::client::parse(&path).is_some() {
@@ -162,25 +165,36 @@ impl Player {
                 Landed,
             ))
         } else {
+            // The picture the index knows the song shows (its own, or its album's) stands at
+            // once, while its file is read (a share's, cold, takes most of a second).
+            let (known_path, album) = (path.clone(), song.tags.album.clone());
+            self.playback.tasks.clear();
+            self.playback.tasks.hold(ui.spawn(
+                novaui::Priority::Visible,
+                move |_| Job::KnownCover {
+                    song: version,
+                    cover: crate::library::index::known_cover(&known_path, album.as_deref()),
+                },
+                Landed,
+            ));
+            // The songs either side are read ahead once this one is open.
+            let q = self.playing_queue();
+            let near = [q.next_pos(), q.prev_pos()].into_iter().flatten().filter_map(|p| q.song_at(p));
+            crate::library::index::ahead(near.map(|s| (s.path.clone(), s.tags.album.clone())).collect());
             ui.spawn(
                 novaui::Priority::Visible,
                 move |_| {
-                    let mut tags = crate::playback::engine::probe(&path);
-                    let cover_editable = tags.as_ref().is_none_or(|t| t.cover.is_none()) && path.exists();
-                    let bytes = crate::library::covers::resolve(&path, tags.as_mut().and_then(|t| t.cover.take()));
-                    let cover = bytes.as_deref().and_then(|b| library::decode_cover(b, 1040));
-                    let lyrics = tags
-                        .as_ref()
-                        .and_then(|t| t.lyrics.as_deref())
-                        .and_then(Lyrics::parse)
-                        .or_else(|| library::sidecar(&path));
-                    Job::Track { tags, cover, lyrics, cover_editable }
+                    let o = crate::library::index::open(&path);
+                    Job::Track { tags: o.tags, cover: o.cover, lyrics: o.lyrics, cover_editable: o.editable }
                 },
                 Landed,
             )
         };
-        // Another song's face, still on its way, is called off.
-        self.playback.tasks.clear();
+        // Another song's face, still on its way, is called off (a local song's known picture
+        // was asked for above, after the call-off).
+        if crate::plugins::client::parse(&song.path).is_some() {
+            self.playback.tasks.clear();
+        }
         self.playback.tasks.hold(task);
         let t = song.title().to_string();
         ui.window.set_title(format!("{t} - NovaPlayer"));
@@ -533,9 +547,14 @@ impl Player {
         let version = self.playback.song_version;
         let task = ui.spawn_waiting(
             move |_| {
-                let kept = crate::library::covers::chosen().choose(&song.path, &img).ok();
+                // Kept, it is the folder's songs' picture (`covers::resolve`): shown as a song's
+                // face shows it (`index::open`).
+                let kept = crate::library::covers::chosen().choose(&song.path, &img).is_ok();
                 crate::library::covers::folder_changed(&song.path);
-                Job::Cover { song: version, cover: kept.as_deref().and_then(|b| library::decode_cover(b, 1040)) }
+                Job::Cover {
+                    song: version,
+                    cover: kept.then(|| crate::library::index::open(&song.path).cover).flatten(),
+                }
             },
             Landed,
         );
@@ -550,8 +569,8 @@ impl Player {
             move |_| {
                 let _ = crate::library::covers::chosen().remove(&song.path);
                 crate::library::covers::folder_changed(&song.path);
-                let cover = crate::library::covers::fallback(&song.path).and_then(|b| library::decode_cover(&b, 1040));
-                Job::Cover { song: version, cover }
+                // Given back: the picture in the file, else the folder's (`covers::resolve`).
+                Job::Cover { song: version, cover: crate::library::index::open(&song.path).cover }
             },
             Landed,
         );

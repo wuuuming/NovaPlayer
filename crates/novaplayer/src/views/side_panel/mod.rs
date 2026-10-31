@@ -5,6 +5,8 @@ mod info;
 mod lyrics;
 pub use lyrics::parse_style;
 mod queue;
+mod select;
+pub use select::Selection;
 
 use crate::app::{Job, NowPlayingTrack};
 use crate::library::queue::Queue;
@@ -106,6 +108,8 @@ struct RowEl {
     len: Id,
     remove: Id,
     grip: Id,
+    /// Multi-select's mark: shown on a chosen row, in the grip's place.
+    check: Id,
     thumb: Id,
     rule: Id,
     idx: usize,
@@ -122,6 +126,8 @@ struct GroupEl {
     window: (f32, f32),
     /// Its layer lines (a romanisation, a translation).
     layers: Vec<LayerEl>,
+    /// In a duet, sung by the second voice (or a later one): its lines stand at the far side.
+    far: bool,
 }
 
 /// A layer line under a group, and where its fold stands: `x` 0 folded away under the group's
@@ -136,6 +142,9 @@ struct LayerEl {
     x: f32,
     v: f32,
     wait: f32,
+    /// The line's height when last laid out (0: never yet): a layer out of the group (folded)
+    /// is not laid out, and opens from this.
+    full: f32,
 }
 
 /// A middle-button autoscroll in progress.
@@ -168,6 +177,18 @@ pub struct SidePanel {
     pub open_amount: f32,
     /// The open amount's motion (`open_amount` is its value at the last present).
     open: novaui::anim::Tween,
+    /// The lyrics page was showing when the lyrics went (a song without them, or not yet with
+    /// them): it comes back with lyrics (`set_lyrics`), unless a page is chosen meanwhile.
+    lyrics_wanted: bool,
+    /// The song's lyrics are known to be on their way (`expect_lyrics`): while they are, the
+    /// lyrics page stays.
+    lyrics_expected: bool,
+    /// The kept top row to put the queue at when its list is first shown (`restore`).
+    restore_top: Option<f32>,
+    /// The list version the kept row is for (the first list shown that has rows).
+    restore_for: Option<u64>,
+    /// The queue's top row (its whole list's) to keep, rounded to a hundredth of a row.
+    kept_top: f32,
     /// The panel was opened (true) or closed since the last present: its slide and fade start.
     panel_turn: Option<bool>,
     pub relayout: bool,
@@ -177,6 +198,8 @@ pub struct SidePanel {
     /// The shown list is the one the loaded song plays from (its row is marked as playing).
     pub shows_playing: bool,
     pub just_seeked: bool,
+    /// The seek came from a clicked line: the lyrics glide there instead of standing there.
+    seek_glides: bool,
     // geometry (dips)
     rect: Option<(f32, f32, f32, f32)>,
     one_column: bool,
@@ -199,6 +222,9 @@ pub struct SidePanel {
     /// with the list version they are of: made by the first search's worker, shared by the next.
     signatures: Option<(u64, std::sync::Arc<std::sync::OnceLock<Vec<crate::app::query::Signature>>>)>,
     pub scroll: f32,
+    /// The scroll the queue's glide last stood it at: a scroll that differs was put there by
+    /// something else (a drag's edge, a reveal, the autoscroll), and the glide starts from it.
+    glided: f32,
     target: f32,
     /// The row pitch and list height the scroll was last laid out at: a resize keeps the same
     /// row at the top (the scroll is rescaled with the pitch, not left in dips).
@@ -214,6 +240,11 @@ pub struct SidePanel {
     listed_version: u64,
     row_gen: u64,
     pub drag: Option<(usize, f32, f32)>,
+    /// Multi-select, while it is on (`select`).
+    select: Option<Selection>,
+    /// While a row is carried: the pointer's y and the list's height (dips), and when the list
+    /// last scrolled under it (`drag_tick`).
+    drag_pointer: Option<(f32, f32, f64)>,
     /// The narrowing the rows were last listed for: a new one snaps the scroll and the rows rise
     /// into place instead of the list sliding across to them.
     listed_narrow: Option<Option<Narrow>>,
@@ -224,6 +255,9 @@ pub struct SidePanel {
     wanted: std::sync::Arc<std::sync::Mutex<(u64, u64, std::collections::HashSet<usize>)>>,
     /// Songs whose file has no picture to make a row cover of (asked once).
     no_thumb: std::collections::HashSet<usize>,
+    /// A local album's row that holds (or is reading) the album's picture, by `album_of`: the
+    /// album's other rows show that one instead of each reading the same picture from its file.
+    albums: HashMap<(std::path::PathBuf, String), usize>,
     /// Rows whose online song's face could not be had (a timeout, a dropped connection): asked
     /// again at the time, a few times (idx → (when, tries)).
     thumb_retry: std::collections::HashMap<usize, (f64, u8)>,
@@ -280,6 +314,24 @@ pub struct SidePanel {
     layer_clock: f64,
 }
 
+/// The first time in `(now, end]` at which `seen` holds (it holds from then on: a motion that
+/// only goes one way), to a tenth of a millisecond; `end` when it never does before.
+fn next_seen(now: f64, end: f64, seen: impl Fn(f64) -> bool) -> f64 {
+    if end <= now || !seen(end) {
+        return end.max(now);
+    }
+    let (mut lo, mut hi) = (now, end);
+    while hi - lo > 1e-4 {
+        let mid = (lo + hi) / 2.0;
+        if seen(mid) {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    hi
+}
+
 impl SidePanel {
     /// Its clocks deliver `Msg::SidePanel`; `off`: the lyric layers switched off (kept).
     pub fn new(ui: &mut novaui::Ui, off: std::collections::BTreeSet<String>) -> Self {
@@ -292,12 +344,18 @@ impl SidePanel {
             turn_key: Default::default(),
             open_amount: Default::default(),
             open: Default::default(),
+            lyrics_wanted: Default::default(),
+            lyrics_expected: Default::default(),
+            restore_top: Default::default(),
+            restore_for: Default::default(),
+            kept_top: Default::default(),
             panel_turn: Default::default(),
             relayout: Default::default(),
             follow_current: Default::default(),
             locate: Default::default(),
             shows_playing: Default::default(),
             just_seeked: Default::default(),
+            seek_glides: Default::default(),
             rect: Default::default(),
             one_column: Default::default(),
             scale: Default::default(),
@@ -309,6 +367,7 @@ impl SidePanel {
             searching: None,
             signatures: None,
             scroll: Default::default(),
+            glided: Default::default(),
             target: Default::default(),
             last_rh: Default::default(),
             last_lh: Default::default(),
@@ -318,6 +377,8 @@ impl SidePanel {
             listed_version: Default::default(),
             row_gen: Default::default(),
             drag: Default::default(),
+            drag_pointer: Default::default(),
+            select: Default::default(),
             listed_narrow: Default::default(),
             thumbs: Default::default(),
             thumb_lru: Default::default(),
@@ -325,6 +386,7 @@ impl SidePanel {
             row_version: Default::default(),
             wanted: Default::default(),
             no_thumb: Default::default(),
+            albums: Default::default(),
             thumb_retry: Default::default(),
             last_pos: Default::default(),
             queue_rail: Default::default(),
@@ -394,6 +456,32 @@ impl SidePanel {
         doc.set(ui, "queue-caption", "");
     }
 
+    /// Opens as the player last ran (`settings::window_state`): folded or open on `page`, with
+    /// the queue's top row `queue_top` once its list is shown. No motion: it starts so.
+    pub fn restore(&mut self, open: bool, page: Page, queue_top: f32) {
+        self.shown.edit().open = open;
+        self.shown.edit().page = page;
+        self.open_amount = if open { 1.0 } else { 0.0 };
+        self.open = novaui::anim::Tween::rest(self.open_amount);
+        self.restore_top = Some(queue_top);
+        self.kept_top = queue_top;
+    }
+
+    /// The page to keep: the lyrics page while it waits for lyrics to come back.
+    pub fn kept_page(&self) -> Page {
+        if self.lyrics_wanted {
+            Page::Lyrics
+        } else {
+            self.shown.page
+        }
+    }
+
+    /// The queue's top row to keep: of the whole list (a search or a narrowing shows other
+    /// rows; what was kept before it stays).
+    pub fn kept_top(&self) -> f32 {
+        self.kept_top
+    }
+
     pub fn open_queue_if_empty(&mut self, q: &Queue) {
         if q.is_empty() {
             self.shown.edit().open = true;
@@ -404,6 +492,7 @@ impl SidePanel {
     }
 
     pub fn toggle(&mut self, now: f64, page: Page) {
+        self.lyrics_wanted = false;
         if self.shown.shows(page) {
             self.set_open(now, false);
         } else {
@@ -429,7 +518,8 @@ impl SidePanel {
         if self.shown.open != on {
             self.shown.edit().open = on;
             let to = if on { 1.0 } else { 0.0 };
-            self.open = novaui::anim::Tween::new(self.open_amount, to, now, PANEL_MOTION.into(), Ease::OutCubic);
+            // Turned back mid-way, it takes back the time it went (`Tween::retarget`).
+            self.open.retarget(to, now, PANEL_MOTION.into(), Ease::OutCubic);
             self.panel_turn = Some(on);
             self.relayout = true;
             if on {
@@ -688,12 +778,23 @@ impl SidePanel {
                 } else if current != self.sung {
                     self.leaving = self.sung;
                     self.sung = current;
+                    if self.just_seeked && self.seek_glides {
+                        // A clicked line: the lines stand on the new one at once, and what is
+                        // seen glides there from where it was (the browse offset carries the
+                        // difference back to 0 on the scroll motion, below).
+                        let seen = self.lyric_scroll + self.browse_glide.at(now);
+                        self.browse_glide.jump(seen - target);
+                        self.lyric_scroll = target;
+                    }
                     self.lyric_scroll_from = self.lyric_scroll;
                     self.lyric_motion = if self.just_seeked {
                         novaui::anim::Tween::rest(1.0)
                     } else {
                         novaui::anim::Tween::new(0.0, 1.0, now, LYRIC_MOTION.into(), Ease::OutCubic)
                     };
+                }
+                if self.just_seeked {
+                    self.seek_glides = false;
                 }
                 self.just_seeked = false;
                 // How far the motion has gone (the sung line's light, the scroll's share).
@@ -711,7 +812,19 @@ impl SidePanel {
                 }
                 if light < 1.0 {
                     self.lyric_scroll = self.lyric_scroll_from + (target - self.lyric_scroll_from) * light;
-                    self.clock.frame();
+                    // The next frame that shows something: near its end the motion moves less
+                    // than a pixel (and the light less than a step) a refresh, and a frame at
+                    // every refresh would draw nothing.
+                    let (from, scale) = (self.lyric_scroll_from, ui.tree.scale());
+                    let px = |l: f32| ((from + (target - from) * l) * scale).round();
+                    let (now_px, motion) = (px(light), self.lyric_motion);
+                    let seen = |t: f64| {
+                        let l = motion.at(t);
+                        px(l) != now_px || l - light >= 1.0 / 255.0 || 1.0 - l < 1.0 / 255.0
+                    };
+                    // A frame then, held as frames are while the window cannot draw (a deadline,
+                    // `at`, ran the motion at every refresh of a minimised window).
+                    self.clock.frame_at(next_seen(now, now + f64::from(LYRIC_MOTION), seen));
                 } else {
                     self.lyric_scroll = target;
                     self.leaving = None;

@@ -388,8 +388,8 @@ pub fn thumbs(acc: &Accounts, plugin: &str, uris: &[String]) -> Vec<(String, Str
     m.iter().filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_owned()))).collect()
 }
 
-/// A row's thumbnail as kept (96 px JPEG), when it is.
-pub fn kept_thumb(path: &Path) -> Option<Vec<u8>> {
+/// A row's thumbnail as kept (the prefetched small cover's, else its kept face's), when it is.
+pub fn kept_thumb(path: &Path) -> Option<novaui::ImageHandle> {
     cache::read_thumb(path)
 }
 
@@ -424,10 +424,11 @@ fn merge(song: &Song, mut f: TrackInfo) -> TrackInfo {
     f
 }
 
-/// The on-disk face cache: only what the pages show (words, lyrics, the cover picture, a row's
-/// thumbnail). Never a stream or cover address: services forbid keeping those. Kept on the
-/// one disk cache the rows use too (`library::disk_cache`), a song's files in its plugin's
-/// group.
+/// The on-disk face cache: only what the pages show (words, lyrics, which picture is its cover
+/// and its row's thumbnail). Never a stream or cover address: services forbid keeping those. A
+/// song's words in its plugin's group of its own disk cache (`library::disk_cache`); its
+/// pictures in the library index's picture store, by their content (`index::keep_face`): the
+/// songs of an album, one picture kept.
 mod cache {
     use super::TrackInfo;
     use crate::library::disk_cache::{self, DiskCache};
@@ -440,8 +441,8 @@ mod cache {
     /// Faces kept before this revision lack what later ones hold (lyrics layers): read as
     /// absent, so the song asks its plugin once more.
     const REV: u32 = 3;
-    /// What the kept faces may take on disk, together.
-    const BUDGET: u64 = 200 << 20;
+    /// What the kept faces' words may take on disk, together (their pictures are the index's).
+    const BUDGET: u64 = 64 << 20;
     /// A kept cover's longest side: what the face draws.
     const COVER_SIDE: u32 = 1040;
 
@@ -450,7 +451,14 @@ mod cache {
 
     fn disk() -> Option<&'static DiskCache> {
         static DISK: std::sync::OnceLock<Option<DiskCache>> = std::sync::OnceLock::new();
-        DISK.get_or_init(|| crate::data_dir().map(|d| DiskCache::open(d.join("online-v3"), BUDGET, ENTRIES))).as_ref()
+        DISK.get_or_init(|| {
+            crate::data_dir().map(|d| {
+                // The cache before pictures moved to the index (each song's own copy): read again.
+                let _ = std::fs::remove_dir_all(d.join("online-v3"));
+                DiskCache::open(d.join("online-v4"), BUDGET, ENTRIES)
+            })
+        })
+        .as_ref()
     }
 
     /// A song's key and its plugin's group.
@@ -462,7 +470,8 @@ mod cache {
     /// A cover as kept: at most 1040 px, re-encoded as JPEG (quality 88) when that is smaller
     /// than what came. Covers are photographs; a 7.9 MB PNG master keeps as ~200 KB.
     pub fn compact(bytes: &[u8]) -> Option<Vec<u8>> {
-        let img = image::load_from_memory(bytes).ok()?;
+        // Bytes from a service: decoded within novaui's bounds (`image::load`).
+        let img = novaui::image::load(bytes)?;
         let img = if img.width().max(img.height()) > COVER_SIDE {
             img.resize(COVER_SIDE, COVER_SIDE, image::imageops::FilterType::Lanczos3)
         } else {
@@ -505,21 +514,28 @@ mod cache {
         }
     }
 
-    pub fn read_thumb(path: &Path) -> Option<Vec<u8>> {
-        let b = disk()?.find(&keys(path).0, "thumb")?;
-        std::fs::read(b).ok().filter(|t| !t.is_empty())
+    /// A picture this song names (`what`: "thumb" or "cover"), by its key in the store.
+    fn named(path: &Path, what: &str) -> Option<String> {
+        let f = disk()?.find(&keys(path).0, what)?;
+        let id = String::from_utf8(std::fs::read(f).ok()?).ok()?;
+        crate::library::index::is_picture_id(&id).then_some(id)
+    }
+
+    /// Its row's thumbnail: the small cover prefetched for it, else its kept face's.
+    pub fn read_thumb(path: &Path) -> Option<novaui::ImageHandle> {
+        let id = named(path, "thumb").or_else(|| {
+            let (d, key) = (disk()?, keys(path).0);
+            d.find(&key, "meta")?;
+            named(path, "cover")
+        })?;
+        crate::library::index::thumb_of(&id)
     }
 
     pub fn write_thumb(path: &Path, bytes: &[u8]) -> bool {
         let Some(d) = disk() else { return false };
-        let Ok(img) = image::load_from_memory(bytes) else { return false };
-        let img = if img.width().max(img.height()) > 96 { img.thumbnail(96, 96) } else { img };
-        let mut out = Vec::new();
-        if image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 85).encode_image(&img.into_rgb8()).is_err() {
-            return false;
-        }
+        let Some(id) = crate::library::index::keep_thumb(bytes) else { return false };
         let (key, group) = keys(path);
-        d.put(&group, &key, "thumb", &out, None).is_ok()
+        d.put(&group, &key, "thumb", id.as_bytes()).is_ok()
     }
 
     pub fn read(path: &Path) -> Option<TrackInfo> {
@@ -565,7 +581,11 @@ mod cache {
                 _ => {}
             }
         }
-        let cover = d.find(&key, "cover").and_then(|c| std::fs::read(c).ok()).filter(|c| !c.is_empty());
+        // A cover named but no longer kept (the store let it go): the face is asked again.
+        let cover = match named(path, "cover") {
+            Some(id) => Some(crate::library::index::face_of(&id)?),
+            None => None,
+        };
         Some(TrackInfo { tags: t, cover, lyrics, layers })
     }
 
@@ -594,15 +614,19 @@ mod cache {
             let one = |s: &str| s.replace(['\r', '\n', '\t'], " ");
             text.push_str(&format!("\n{LAYER}\t{}\t{}\n{}", one(&l.id), one(&l.name), l.lrc));
         }
-        // The cover first: a .meta file means the face is whole. Each file is written whole
-        // or not at all: a row and the face asking at once never leave half a file.
-        match &f.cover {
-            Some(c) => {
-                let _ = d.put(&group, &key, "cover", c, None);
+        // The cover first (in the store, by content; its name here): a .meta file means the
+        // face is whole. Each file is written whole or not at all: a row and the face asking at
+        // once never leave half a file.
+        match f.cover.as_deref().map(crate::library::index::keep_face) {
+            Some(Some(id)) => {
+                if d.put(&group, &key, "cover", id.as_bytes()).is_err() {
+                    return;
+                }
             }
+            Some(None) => return,
             None => d.forget_file(&key, "cover"),
         }
-        let _ = d.put(&group, &key, "meta", &pack(&text), None);
+        let _ = d.put(&group, &key, "meta", &pack(&text));
     }
 }
 
@@ -848,5 +872,34 @@ mod cache_tests {
         // Deflated: the file is far smaller than its text, and holds no address.
         assert!(std::fs::metadata(meta).unwrap().len() * 3 < lrc.len() as u64);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The songs of an album keep one picture (the library index's, by content), each names
+    /// it; a row's thumbnail comes from the face kept; a face whose picture is gone is not
+    /// trusted (its plugin is asked again).
+    #[test]
+    fn an_albums_online_songs_keep_one_picture() {
+        let _by_hand = STAMPS_BY_HAND.locked();
+        crate::plugins::pcm::add_scheme_for_test("cachea", "cachea");
+        let mut png = Vec::new();
+        image::RgbImage::from_fn(200, 200, |x, y| image::Rgb([x as u8, y as u8, 7]))
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let songs: Vec<std::path::PathBuf> = (1..=3).map(|k| format!("cachea:song:{k}").into()).collect();
+        for p in &songs {
+            let tags = Tags { title: Some(p.display().to_string()), ..Default::default() };
+            cache::write(p, &TrackInfo { tags, cover: Some(png.clone()), lyrics: None, layers: vec![] });
+        }
+        let id = crate::library::disk_cache::key(&png);
+        let faces = crate::library::index::face_of(&id).expect("the picture kept");
+        assert_eq!(faces, png);
+        for p in &songs {
+            assert_eq!(cache::read(p).unwrap().cover.as_deref(), Some(&png[..]), "each names the one picture");
+            let t = cache::read_thumb(p).expect("its row's thumbnail, from the face");
+            assert_eq!(t.size(), (96, 96));
+        }
+        // The picture forgotten (the store's budget): the face is asked again, not shown bare.
+        crate::library::index::forget_picture_for_test(&id);
+        assert!(cache::read(&songs[0]).is_none());
     }
 }

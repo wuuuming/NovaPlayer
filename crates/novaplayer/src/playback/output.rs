@@ -70,8 +70,9 @@ pub struct Output {
     pub systems: Vec<AudioOutputSystem>,
     /// They were listed at least once (`Player::list_outputs`).
     pub listed: bool,
-    /// The flyout was asked for before the first list landed: it opens when it does.
-    pub asked: bool,
+    /// The flyout or a settings dropdown (`views::menus::output::DROPS`) was asked for before
+    /// the first list landed: it opens when it does.
+    pub asked: Option<Asked>,
     /// The route the outputs were sent to: the core's answer, set where the choice changes (a
     /// kept ASIO choice in a build without ASIO goes to WASAPI's default).
     pub route: AudioOutputRoute,
@@ -95,7 +96,7 @@ impl Output {
             route = apply(&c);
             note = Some(novaui::i18n::t("output.no-asio", &[("host", &system_name(AudioOutputHost::Wasapi))]));
         }
-        (Output { choice, path, systems: Vec::new(), listed: false, asked: false, route }, note)
+        (Output { choice, path, systems: Vec::new(), listed: false, asked: None, route }, note)
     }
 
     /// The outputs go to an ASIO driver (the volume is the driver's then).
@@ -167,8 +168,8 @@ impl Output {
         })
     }
 
-    pub fn toggle_dop(&mut self) -> bool {
-        self.choose(|c| c.dop = !c.dop)
+    pub fn set_dop(&mut self, on: bool) -> bool {
+        self.choose(|c| c.dop = on)
     }
 
     /// The device menu's rows: (device, route, checked). WASAPI: the system default first,
@@ -202,6 +203,13 @@ impl Output {
 }
 
 /// A row of the device menu.
+/// What waits for the outputs to be listed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Asked {
+    Flyout,
+    Drop(&'static str),
+}
+
 pub enum Device {
     /// The system's default output; the device it is now, when known.
     Default(Option<String>),

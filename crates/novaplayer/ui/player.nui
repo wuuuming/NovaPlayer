@@ -161,7 +161,13 @@ let flyout_w_drag = 280 * text_scale;
 let flyout_w_min = 200 * text_scale;
 let flyout_w_min_output = 240 * text_scale;
 let flyout_w_max = 360 * text_scale;
+// A dropdown's list: as wide as its box, wider for longer names (a device's) up to this.
+let drop_list_w_max = 480 * text_scale;
 let flyout_pad = 4;
+// A settings card's width (the page's column less its sides); below settings_wide_w its controls
+// go under its title (WinUI's SettingsCard): side by side they ran past a narrow window's edge.
+let settings_card_w = min(window.w, 1072 * text_scale) - 72 * text_scale;
+let settings_stacked = settings_card_w < 560 * text_scale;
 let flyout_side_gap = flyout_pad;
 
 // ---- the band and the columns (4.3, 4.5, 4.6) -----------------------------------------------
@@ -334,6 +340,10 @@ component QueueRow(title, by) {
     Button #remove .ctl { width: 32 * text_scale; height: 32 * text_scale; icon: Dismiss; icon-size: 12 * text_scale; shown: false; fg: text-secondary; shrink: 0; label: @a11y.remove; }
     Button #grip .ctl { width: 32 * text_scale; height: 32 * text_scale; icon: ReOrderDotsVertical; icon-size: 16 * text_scale; fg: text-secondary; shrink: 0;
                         drag-events: true; cursor: grab; role: none; focusable: false; }
+    // Multi-select's mark on a chosen row, where the grip was.
+    Box #check { width: 32 * text_scale; height: 32 * text_scale; shrink: 0; shown: false; justify: center; align: center;
+      Icon { icon: Checkmark; icon-size: 16 * text_scale; fg: text-primary; }
+    }
     Box #rule { position: absolute; left: 72 * text_scale; right: 8 * text_scale; bottom: -2 * text_scale - 0.5; height: 1; bg: rule; }
   }
 }
@@ -397,12 +407,17 @@ component ComboBox(action, edit, hint) {
   }
 }
 
+// What a card holds (its controls, written as its children) stands beside its title, or under it
+// on a narrow page (settings_stacked). A card with several controls holds them in one Row.
 component SettingsCard(icon, title, desc) {
-  Row #card .settings-card { role: group; label: $title;
-    Icon #icon { icon: $icon; icon-size: 20 * text_scale; fg: text-primary; shrink: 0; }
-    Column #words { grow: 1; shrink: 1; min-width: 0;
-      Text #title { text: $title; type: body; fg: text-primary; }
-      Text #desc { text: $desc; type: caption; fg: text-secondary; lines: 0; width: 100%; }
+  Row #card .settings-card { role: group; label: $title; direction: settings_stacked ? column : row;
+                             align: settings_stacked ? start : center; gap: (settings_stacked ? 12 : 20) * text_scale;
+    Row #head { grow: 1; shrink: 1; min-width: 0; width: settings_stacked ? 100% : auto; gap: 20 * text_scale; align: center;
+      Icon #icon { icon: $icon; icon-size: 20 * text_scale; fg: text-primary; shrink: 0; }
+      Column #words { grow: 1; shrink: 1; min-width: 0;
+        Text #title { text: $title; type: body; fg: text-primary; }
+        Text #desc { text: $desc; type: caption; fg: text-secondary; lines: 0; width: 100%; shown: $desc != ""; }
+      }
     }
   }
 }
@@ -603,6 +618,12 @@ component TextBox(hint, action) {
 }
 
 // The row a flyout opens a second flyout from: a chevron at its end (WinUI's sub-item).
+// A colour's row: its colour beside its name (the desktop lyrics' colour). The stroke shows a
+// white or black one on a plate of its own shade.
+component MenuSwatch(fill) {
+  Box #swatch { width: 16 * text_scale; height: 16 * text_scale; radius: 4 * text_scale; bg: $fill; border: 1 stroke-flyout; shrink: 0; }
+}
+
 component MenuChevron() {
   Icon #chevron { icon: ChevronRight; icon-size: 12 * text_scale; fg: text-secondary; shrink: 0; }
 }
@@ -624,7 +645,8 @@ Stack #root { width: 100%; height: 100%; bg: #202020;
     // The file's words about itself (4.7). Two blocks: a song change dissolves the one that was
     // up into the new song's (b7b33f5 sound_backdrop.rs: linear, the theme switch's 267 ms, on the
     // artwork's clock when the artwork changes too), each laid out at its own lines.
-    Box #words-block { left: area_mid - col_w / 2; top: words_y; width: col_w; height: words_h; opacity: strength;
+    // Pressed with the secondary button: 复制 › (menus/copy.rs).
+    Box #words-block { left: area_mid - col_w / 2; top: words_y; width: col_w; height: words_h; opacity: strength; hit: true;
       Column #words-a { position: absolute; left: 0; top: 0; width: 100%; align: center;
         Text #title { live: true; text: $title; font-size: title_size; line: title_size * 36 / 28; weight: 700 - heading_lighten; lines: 2; text-align: center; width: 100%; fg: text-primary; }
         Text #artist { text: $artist; font-size: subtitle_size; line: subtitle_size * 24 / 18; text-align: center; width: 100%; fg: text-secondary; margin-top: 4 * text_scale; }
@@ -729,6 +751,7 @@ Stack #root { width: 100%; height: 100%; bg: #202020;
           // Beside the search, the face's control buttons: locate the playing song, and the
           // WinUI List button whose menu sorts the queue.
           Row #q-tools { height: 32 * chrome_scale; gap: 4 * chrome_scale; shrink: 0; margin-left: -12 * text_scale;
+            Button #q-select .ctl { width: 32 * chrome_scale; height: 32 * chrome_scale; icon: MultiselectLtr; icon-size: 16 * chrome_scale; on-click: select; label: @a11y.select; bg-lit: wash-press; }
             Button #q-locate .ctl { width: 32 * chrome_scale; height: 32 * chrome_scale; icon: LocateRegular; icon-size: 16 * chrome_scale; on-click: locate; label: @a11y.locate; }
             Button #q-sort .ctl { width: 32 * chrome_scale; height: 32 * chrome_scale; icon: ListFilled; icon-size: 16 * chrome_scale; on-click: sort-menu; label: @a11y.sort; }
           }
@@ -816,9 +839,11 @@ Stack #root { width: 100%; height: 100%; bg: #202020;
         }
         // Installed lyric styles (app::lyric_styles): chosen here, installed and deleted here.
         SettingsCard(ClosedCaption, @lyric-style.title, @lyric-style.desc) #lyric-style {
-          CardButton(@lyric-style.delete, "lyric-style-delete") #lyric-style-del { shown: $lyric-style-installed; }
-          CardButton(@lyric-style.install, "lyric-style-install") #lyric-style-add;
-          Dropdown("drop:lyric-style") #lyric-style-drop;
+          Row #lyric-style-tools { gap: 20 * text_scale; align: center; shrink: 0;
+            CardButton(@lyric-style.delete, "lyric-style-delete") #lyric-style-del { shown: $lyric-style-installed; }
+            CardButton(@lyric-style.install, "lyric-style-install") #lyric-style-add;
+            Dropdown("drop:lyric-style") #lyric-style-drop;
+          }
         }
         SettingsCard(LocalLanguage, @locale.title, @locale.desc) #locale {
           Dropdown("drop:locale") #locale-drop;
@@ -832,6 +857,18 @@ Stack #root { width: 100%; height: 100%; bg: #202020;
           Dropdown("drop:screen-reader") #screen-reader-drop;
         }
         SettingsHeading(@settings.playback) #playback;
+        // Where the sound goes (the volume button's flyout chooses the same): the system's
+        // interface when there is a choice of them, the device, DoP under ASIO.
+        SettingsCard(Speaker2, @output-api.title, "") #output-api { shown: $output-api-on;
+          Dropdown("drop:output-api") #output-api-drop;
+        }
+        SettingsCard(Speaker1, @output-device.title, "") #output-device {
+          // Devices have long names: the box shows the start of one, its list them whole.
+          Dropdown("drop:output-device") #output-device-drop;
+        }
+        SettingsCard(Speaker1, @output-dop.title, "") #output-dop { shown: $output-dop-on;
+          Dropdown("drop:output-dop") #output-dop-drop;
+        }
         // Songs played at the loudness their tags state (player-core's ReplayGain).
         SettingsCard(Speaker1, @replay-gain.title, @replay-gain.desc) #replay-gain {
           Dropdown("drop:replay-gain") #replay-gain-drop;
@@ -868,10 +905,10 @@ Stack #root { width: 100%; height: 100%; bg: #202020;
             Dropdown("drop:desktop-lyrics-lock") #desktop-lyrics-lock-drop;
           }
           SettingsCard(FontIncrease, @desktop-lyrics.size, @desktop-lyrics.size.desc) #dl-size {
-            Dropdown("drop:desktop-lyrics-size") #desktop-lyrics-size-drop;
+            ComboBox("drop:desktop-lyrics-size", "drop-typed:desktop-lyrics-size", @desktop-lyrics.size.find) #desktop-lyrics-size-drop;
           }
           SettingsCard(TextQuote, @desktop-lyrics.sung, @desktop-lyrics.sung.desc) #dl-sung {
-            Dropdown("drop:desktop-lyrics-sung") #desktop-lyrics-sung-drop;
+            ComboBox("drop:desktop-lyrics-sung", "drop-typed:desktop-lyrics-sung", @desktop-lyrics.sung.find) #desktop-lyrics-sung-drop;
           }
           SettingsCard(Eye, @desktop-lyrics.plate, @desktop-lyrics.plate.desc) #dl-plate {
             Dropdown("drop:desktop-lyrics-plate") #desktop-lyrics-plate-drop;

@@ -1,5 +1,7 @@
-//! A song's artwork when its file has none (b7b33f5's `covers`): a cover the listener chose for
-//! its folder, else the nearest image the album marks as its cover.
+//! A song's artwork: a cover the listener chose for its folder, else the picture in its file,
+//! else the nearest image the album marks as its cover (`resolve`). And each folder's listing,
+//! read once a run: its pictures, and every file's size and time, by which the library index
+//! knows a song's file has not changed (`stamp`) and that a song has lyrics beside it.
 //!
 //! Chosen covers live under `%LOCALAPPDATA%\NovaPlayer\chosen-covers` (never beside the
 //! song): `index.txt` maps a folder (hex of its lowercased path) to a JPEG named by the folder's
@@ -22,6 +24,8 @@ struct Listing {
     images: Vec<PathBuf>,
     named: Option<PathBuf>,
     art_folders: Vec<PathBuf>,
+    /// Every file's size and time (seconds), by its lowercased name.
+    stamps: std::sync::Arc<HashMap<String, (u64, u64)>>,
 }
 
 static LISTED: OnceLock<Mutex<HashMap<PathBuf, Listing>>> = OnceLock::new();
@@ -54,7 +58,7 @@ fn list(folder: &Path) -> Listing {
     if let Some(l) = m.locked().get(folder) {
         return l.clone();
     }
-    let (mut images, mut folders) = (Vec::new(), Vec::new());
+    let (mut images, mut folders, mut stamps) = (Vec::new(), Vec::new(), HashMap::new());
     if let Ok(rd) = std::fs::read_dir(folder) {
         for e in rd.filter_map(Result::ok) {
             let Ok(k) = e.file_type() else { continue };
@@ -64,8 +68,14 @@ fn list(folder: &Path) -> Listing {
             let p = e.path();
             if k.is_dir() && e.file_name().to_str().is_some_and(is_art_folder) {
                 folders.push(p);
-            } else if k.is_file() && is_image(&p) {
-                images.push(p);
+            } else if k.is_file() {
+                // On Windows the listing carries each file's size and time: no file is opened.
+                if let Ok(m) = e.metadata() {
+                    stamps.insert(e.file_name().to_string_lossy().to_lowercase(), stamp_of(&m));
+                }
+                if is_image(&p) {
+                    images.push(p);
+                }
             }
         }
     }
@@ -73,7 +83,7 @@ fn list(folder: &Path) -> Listing {
     folders.sort_by(|a, b| crate::library::by_name(a, b));
     let named =
         images.iter().filter_map(|p| cover_rank(p).map(|r| (r, p))).min_by_key(|(r, _)| *r).map(|(_, p)| p.clone());
-    let l = Listing { images, named, art_folders: folders };
+    let l = Listing { images, named, art_folders: folders, stamps: std::sync::Arc::new(stamps) };
     m.locked().insert(folder.to_owned(), l.clone());
     l
 }
@@ -99,15 +109,49 @@ pub fn folder_image(song: &Path) -> Option<PathBuf> {
     })
 }
 
-/// The artwork for a song without an embedded picture: chosen, else from its folder.
-pub fn fallback(song: &Path) -> Option<Vec<u8>> {
-    chosen().read(song).or_else(|| std::fs::read(folder_image(song)?).ok())
+/// A file's size and time (seconds since 1970) as its folder's listing says.
+pub(crate) fn stamp_of(m: &std::fs::Metadata) -> (u64, u64) {
+    let t = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
+    (m.len(), t)
 }
 
-/// One resolution policy for both primary artwork and row thumbnails, including CUE paths.
-/// Embedded content wins; absence falls back to the listener's choice and then folder artwork.
+/// `file`'s size and time as its folder's listing (read once a run) says; `None` when the
+/// folder cannot be listed (a share that is away) or does not list it. Asked of a file whose
+/// folder is not listed yet, the folder is listed now.
+pub fn stamp(file: &Path) -> Option<(u64, u64)> {
+    let l = list(file.parent()?);
+    l.stamps.get(&file.file_name()?.to_string_lossy().to_lowercase()).copied()
+}
+
+/// Whether timed lyrics lie beside `song` (`<name>.lrc`, `library::sidecar`), by its folder's
+/// listing.
+pub fn lyrics_beside(song: &Path) -> bool {
+    let Some(name) = song.with_extension("lrc").file_name().map(|n| n.to_string_lossy().to_lowercase()) else {
+        return false;
+    };
+    song.parent().is_some_and(|f| list(f).stamps.contains_key(&name))
+}
+
+/// Every folder is listed again when next asked (tests: a new run).
+#[cfg(feature = "test-support")]
+pub fn forget_listings() {
+    if let Some(m) = LISTED.get() {
+        m.locked().clear();
+    }
+}
+
+/// `folder` is listed again when next asked (its files were read again: a rescan).
+pub fn forget_listing(folder: &Path) {
+    if let Some(m) = LISTED.get() {
+        m.locked().remove(folder);
+    }
+}
+
+/// One resolution policy for both primary artwork and row thumbnails, including CUE paths:
+/// the listener's choice for the folder wins (it is how a wrong embedded picture is put
+/// right), then the picture in the file, then the folder's artwork.
 pub fn resolve(song: &Path, embedded: Option<Vec<u8>>) -> Option<Vec<u8>> {
-    embedded.or_else(|| fallback(song))
+    chosen().read(song).or(embedded).or_else(|| std::fs::read(folder_image(song)?).ok())
 }
 
 /// The covers of `song`'s folder changed (one chosen, or given back): what is kept of the folder
@@ -118,7 +162,7 @@ pub fn folder_changed(song: &Path) {
     if let Some(m) = LISTED.get() {
         m.locked().remove(folder);
     }
-    super::row_cache::invalidate_folder(folder);
+    super::index::invalidate_folder(folder);
 }
 
 pub struct Chosen {
@@ -195,7 +239,7 @@ impl Chosen {
         let k = folder_key(song).ok_or_else(|| bad("song has no folder"))?;
         let root = self.folder.clone().ok_or_else(|| bad("no data folder"))?;
         let bytes = std::fs::read(image)?;
-        let img = image::load_from_memory(&bytes).map_err(|_| bad("image does not decode"))?;
+        let img = novaui::image::load(&bytes).ok_or_else(|| bad("image does not decode"))?;
         let kept = if novaui::image::has_gain_map(&bytes) {
             bytes
         } else {

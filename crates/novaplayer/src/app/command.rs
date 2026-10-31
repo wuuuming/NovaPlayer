@@ -16,6 +16,20 @@ use std::fmt;
 use std::str::FromStr;
 use std::time::Duration;
 
+/// What of the playing song a 复制 puts on the clipboard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CopyWhat {
+    Title,
+    Artist,
+    Album,
+    /// `title - artist`.
+    TitleArtist,
+    /// A lyric group: its lines and the layers shown under them.
+    Line(usize),
+    /// Every group so.
+    Lyrics,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command {
     // Playback and the face.
@@ -59,10 +73,25 @@ pub enum Command {
     /// 添加到 / 移动到 a playlist (`add-row:<pos>:<id|new>`): `None`, a new one.
     AddRow(usize, Option<u32>),
     MoveRow(usize, Option<u32>),
+    /// Multi-select on or off (`select`, the toggle beside the search; Shift+Ctrl+A).
+    Select,
+    /// Every row shown chosen, or none when they all are (`select-all`; Ctrl+A while selecting).
+    SelectAll,
+    /// The chosen rows' menu's playlist picker (`sel-pick:<1 moves>`): pressed again, it goes.
+    SelPick(bool),
+    /// The chosen songs 添加到 / 移动到 a playlist (`add-sel:<id|new>`): `None`, a new one.
+    AddSel(Option<u32>),
+    MoveSel(Option<u32>),
+    /// The chosen songs leave the list (`remove-sel`): the first press asks, the second does it.
+    RemoveSel,
     /// The row's song on the info page.
     RowInfo(usize),
     /// A lyric line (its group): playback goes to it.
     Lyric(usize),
+    /// The song's words' menu: 复制 › opens what to copy beside it (`copy-pick`).
+    CopyPick,
+    /// Puts words of the playing song on the clipboard (`copy:<what>`).
+    Copy(CopyWhat),
     // Flyouts.
     PlaylistMenu,
     SortMenu,
@@ -114,7 +143,8 @@ pub enum Command {
     // Output and the song's option.
     Route(AudioOutputRoute),
     OutSys(AudioOutputHost),
-    OutDop,
+    /// DSD over DoP on or off (`out-dop:on`, `out-dop:off`).
+    OutDop(bool),
     SetOption(String),
     // The artwork.
     CoverChange,
@@ -167,6 +197,8 @@ fn num<T: FromStr>(s: &str) -> Option<T> {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Confirm {
     DeletePlaylist(u32),
+    /// The chosen songs leave the list (`RemoveSel`).
+    RemoveSelected,
     EnablePlugin(String),
 }
 
@@ -220,8 +252,32 @@ impl Command {
                     MoveRow(num(k)?, to)
                 }
             }
+            "select" => Select,
+            "select-all" => SelectAll,
+            "sel-pick" => SelPick(arg == "1"),
+            "add-sel" | "move-sel" => {
+                let to = if arg == "new" { None } else { Some(num(arg)?) };
+                if verb == "add-sel" {
+                    AddSel(to)
+                } else {
+                    MoveSel(to)
+                }
+            }
+            "remove-sel" => RemoveSel,
             "row-info" => RowInfo(at(tag())?),
             "lyric" => Lyric(at(tag())?),
+            "copy-pick" => CopyPick,
+            "copy" => Copy(match arg.split_once(':') {
+                Some(("line", g)) => CopyWhat::Line(num(g)?),
+                _ => match arg {
+                    "title" => CopyWhat::Title,
+                    "artist" => CopyWhat::Artist,
+                    "album" => CopyWhat::Album,
+                    "title-artist" => CopyWhat::TitleArtist,
+                    "lyrics" => CopyWhat::Lyrics,
+                    _ => return None,
+                },
+            }),
             "playlist-menu" => PlaylistMenu,
             "sort-menu" => SortMenu,
             "app-menu" => AppMenu,
@@ -287,7 +343,11 @@ impl Command {
                 "wasapi" => AudioOutputHost::Wasapi,
                 _ => return None,
             }),
-            "out-dop" => OutDop,
+            "out-dop" => OutDop(match arg {
+                "on" => true,
+                "off" => false,
+                _ => return None,
+            }),
             "option" => SetOption(s()),
             "cover-change" => CoverChange,
             "cover-restore" => CoverRestore,
@@ -327,11 +387,14 @@ impl Command {
                 | Rename
                 | New
                 | OutSys(_)
-                | OutDop
+                | OutDop(_)
                 | Route(_)
                 | PluginSwitch(_)
                 | PluginFlyout(_)
                 | RowPick(..)
+                | SelPick(_)
+                | RemoveSel
+                | CopyPick
                 | Connect(_)
                 | ConnectCancel(_)
                 | Disconnect(_)
@@ -398,7 +461,7 @@ impl fmt::Display for Command {
             OnlineCacheClear => f.write_str("online-cache-clear"),
             PluginReload => f.write_str("plugin-reload"),
             PluginFolder => f.write_str("plugin-folder"),
-            OutDop => f.write_str("out-dop"),
+            OutDop(on) => f.write_str(if *on { "out-dop:on" } else { "out-dop:off" }),
             CoverChange => f.write_str("cover-change"),
             CoverRestore => f.write_str("cover-restore"),
             Search => f.write_str("search"),
@@ -419,8 +482,28 @@ impl fmt::Display for Command {
                     None => write!(f, "{verb}:{k}:new"),
                 }
             }
+            Select => f.write_str("select"),
+            SelectAll => f.write_str("select-all"),
+            SelPick(mv) => write!(f, "sel-pick:{}", u8::from(*mv)),
+            AddSel(to) | MoveSel(to) => {
+                let verb = if matches!(self, AddSel(_)) { "add-sel" } else { "move-sel" };
+                match to {
+                    Some(id) => write!(f, "{verb}:{id}"),
+                    None => write!(f, "{verb}:new"),
+                }
+            }
+            RemoveSel => f.write_str("remove-sel"),
             RowInfo(k) => write!(f, "row-info:{k}"),
             Lyric(k) => write!(f, "lyric:{k}"),
+            CopyPick => f.write_str("copy-pick"),
+            Copy(c) => match c {
+                CopyWhat::Title => f.write_str("copy:title"),
+                CopyWhat::Artist => f.write_str("copy:artist"),
+                CopyWhat::Album => f.write_str("copy:album"),
+                CopyWhat::TitleArtist => f.write_str("copy:title-artist"),
+                CopyWhat::Line(g) => write!(f, "copy:line:{g}"),
+                CopyWhat::Lyrics => f.write_str("copy:lyrics"),
+            },
             Drop(k) => write!(f, "drop:{k}"),
             Sort(s, d) => write!(f, "sort:{}:{}", s.key(), u8::from(*d)),
             Switch(id) => write!(f, "switch:{id}"),
@@ -560,7 +643,30 @@ pub fn run(p: &mut Player, ui: &mut Ui, c: Command) {
             p.lists.shown_list.remove(pos);
             p.schedule_save();
         }
-        C::RowPick(pos, mv) => p.views(|v, m| crate::views::menus::row::open_pick(v, ui, m, pos, mv)),
+        C::RowPick(pos, mv) => p.views(|v, m| crate::views::menus::row::open_pick(v, ui, m, Some(pos), mv)),
+        C::Select => {
+            let on = !p.side_panel.selecting();
+            p.side_panel.set_selecting(on);
+            // Its rows are the queue's: turned on from elsewhere, the queue comes up.
+            if on && !p.side_panel.shown.shows(Page::Queue) {
+                p.side_panel.toggle(now, Page::Queue);
+            }
+        }
+        C::SelectAll => p.side_panel.select_all(&p.lists.shown_list),
+        C::SelPick(mv) => p.views(|v, m| crate::views::menus::row::open_pick(v, ui, m, None, mv)),
+        C::AddSel(to) => p.put_selected(ui, to, false),
+        C::MoveSel(to) => p.put_selected(ui, to, true),
+        C::RemoveSel => {
+            if pending == Some(Confirm::RemoveSelected) {
+                p.remove_selected(ui);
+                p.views(|v, _| close_menus(v, ui));
+            } else {
+                p.pending = Some(Confirm::RemoveSelected);
+                p.views(|v, m| crate::views::menus::row::ask_remove(v, ui, m));
+            }
+        }
+        C::CopyPick => p.views(|v, _| crate::views::menus::copy::open_copy_pick(v, ui)),
+        C::Copy(what) => p.copy(ui, what),
         C::AddRow(pos, to) => p.put_row(ui, pos, to, false),
         C::MoveRow(pos, to) => p.put_row(ui, pos, to, true),
         C::RowInfo(pos) => p.row_info(ui, pos),
@@ -593,9 +699,19 @@ pub fn run(p: &mut Player, ui: &mut Ui, c: Command) {
             p.views(|v, m| open_app_menu(v, ui, m));
         }
         C::OptionMenu => p.open_option(ui),
-        C::Drop(key) => {
-            p.views(|v, m| crate::views::menus::dropdown::open(v, ui, m, &key, ""));
-        }
+        C::Drop(key) => match crate::views::menus::output::DROPS.into_iter().find(|k| *k == key) {
+            // The outputs are listed again each time; the list shows at once when they were
+            // listed before, else when they land.
+            Some(k) => {
+                p.list_outputs(ui);
+                if p.playback.output.listed {
+                    p.views(|v, m| crate::views::menus::dropdown::open(v, ui, m, k, ""));
+                } else {
+                    p.playback.output.asked = Some(crate::playback::output::Asked::Drop(k));
+                }
+            }
+            None => p.views(|v, m| crate::views::menus::dropdown::open(v, ui, m, &key, "")),
+        },
         C::Sort(k, desc) => p.sort_by(ui, k, desc),
         C::Switch(id) => p.switch_list(ui, id),
         C::Delete(id) => {
@@ -784,19 +900,18 @@ pub fn run(p: &mut Player, ui: &mut Ui, c: Command) {
             v if v.starts_with("plugin.") => p.plugin_command(ui, &id, &v["plugin.".len()..]),
             _ => {}
         },
+        // The flyout stays up and shows the choice made; a settings dropdown's list closes.
         C::Route(route) => {
             p.choose_output(ui, |o| o.choose_route(route));
-            if p.views(|v, _| crate::views::menus::output::is_up(v)) {
-                p.views(|v, m| open_output_menu(v, ui, m));
-            }
+            output_chosen(p, ui);
         }
         C::OutSys(h) => {
             p.choose_output(ui, |o| o.choose_system(h));
-            p.views(|v, m| open_output_menu(v, ui, m));
+            output_chosen(p, ui);
         }
-        C::OutDop => {
-            p.choose_output(ui, crate::playback::output::Output::toggle_dop);
-            p.views(|v, m| open_output_menu(v, ui, m));
+        C::OutDop(on) => {
+            p.choose_output(ui, |o| o.set_dop(on));
+            output_chosen(p, ui);
         }
         C::SetOption(v) => p.set_option(ui, &v),
         C::CoverChange => p.choose_cover(ui),
@@ -813,6 +928,12 @@ pub fn run(p: &mut Player, ui: &mut Ui, c: Command) {
             if p.settings_page.open {
                 p.views(|v, md| crate::views::settings_page::go(v, ui, md, level))
             } else {
+                // The outputs are listed as the page opens: the interface's card (shown when
+                // there is a choice of interfaces) is up with the page, not pushed in under the
+                // pointer once the device list is first opened.
+                if !p.playback.output.listed {
+                    p.list_outputs(ui);
+                }
                 p.views(|v, md| crate::views::settings_page::open(v, ui, md, level))
             }
             if effect {
@@ -858,6 +979,16 @@ pub fn run(p: &mut Player, ui: &mut Ui, c: Command) {
 
 /// The second press of a playlist's delete: it goes; when it was shown, the first other one
 /// shows (or a new empty one, when it was the last).
+/// An output was chosen: the output flyout, up, shows it; a settings dropdown's list closes (its
+/// box names the choice at the next present).
+fn output_chosen(p: &mut Player, ui: &mut Ui) {
+    if p.views(|v, _| crate::views::menus::output::is_up(v)) {
+        p.views(|v, m| open_output_menu(v, ui, m));
+    } else {
+        p.views(|v, _| close_menus(v, ui));
+    }
+}
+
 fn delete_list(p: &mut Player, ui: &mut Ui, id: u32) {
     let was_open = p.lists.shown_list.id == Some(id);
     if let Some(q) = p.lists.playing_list.as_mut().filter(|q| q.id == Some(id)) {
@@ -995,8 +1126,21 @@ mod tests {
             RowPick(3, true),
             AddRow(3, Some(2)),
             MoveRow(3, None),
+            Select,
+            SelectAll,
+            SelPick(true),
+            AddSel(Some(2)),
+            MoveSel(None),
+            RemoveSel,
             RowInfo(3),
             Lyric(4),
+            CopyPick,
+            Copy(CopyWhat::Title),
+            Copy(CopyWhat::Artist),
+            Copy(CopyWhat::Album),
+            Copy(CopyWhat::TitleArtist),
+            Copy(CopyWhat::Line(3)),
+            Copy(CopyWhat::Lyrics),
             PlaylistMenu,
             SortMenu,
             AppMenu,
@@ -1036,7 +1180,8 @@ mod tests {
             Route(AudioOutputRoute::Asio("a".into())),
             OutSys(AudioOutputHost::Asio),
             OutSys(AudioOutputHost::Wasapi),
-            OutDop,
+            OutDop(true),
+            OutDop(false),
             SetOption("hq".into()),
             CoverChange,
             CoverRestore,
@@ -1089,8 +1234,16 @@ mod tests {
                 | RowPick(..)
                 | AddRow(..)
                 | MoveRow(..)
+                | Select
+                | SelectAll
+                | SelPick(_)
+                | AddSel(_)
+                | MoveSel(_)
+                | RemoveSel
                 | RowInfo(_)
                 | Lyric(_)
+                | CopyPick
+                | Copy(_)
                 | PlaylistMenu
                 | SortMenu
                 | AppMenu
@@ -1126,7 +1279,7 @@ mod tests {
                 | Plugin { .. }
                 | Route(_)
                 | OutSys(_)
-                | OutDop
+                | OutDop(_)
                 | SetOption(_)
                 | CoverChange
                 | CoverRestore

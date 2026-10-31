@@ -30,10 +30,16 @@ pub fn apply(ui: &mut Ui, v: &mut Views, key: &str, value: Option<&str>) {
 }
 
 /// Names `value` (as kept) in the box of `key`: a text, or the text of a box that takes typing.
+/// A typed value (`Typed::value`) is named as it is kept.
 fn name_kept(ui: &mut Ui, doc: &mut Doc, key: &str, value: Option<&str>) {
     let Some(s) = setting(key) else { return };
     let rows = (s.choices)(ui);
-    let Some(label) = standing(&rows, value).map(|c| c.label.clone()) else { return };
+    let row = rows.iter().find(|c| Some(c.value.as_str()) == value);
+    let typed = || value.filter(|v| s.typed.is_typed(v)).map(str::to_owned);
+    let Some(label) = row.map(|c| c.label.clone()).or_else(typed).or_else(|| rows.first().map(|c| c.label.clone()))
+    else {
+        return;
+    };
     let id = doc.id(&format!("{key}-drop.value"));
     if ui.text_edit(id).is_some() {
         ui.set_edit_text(id, &label);
@@ -46,9 +52,18 @@ fn name_kept(ui: &mut Ui, doc: &mut Doc, key: &str, value: Option<&str>) {
 /// (all of them for an empty one), the best found first (`Query`), the kept one checked. Typing
 /// in its box opens it narrowed.
 pub fn open(v: &mut Views, ui: &mut Ui, m: &Models, key: &str, query: &str) {
+    // The output's (kept in `output.txt`, not `settings.txt`).
+    if let Some((rows, current)) = crate::views::menus::output::drop_rows(ui, m, key) {
+        let box_el = v.id(&format!("{key}-drop.drop"));
+        fill(v, ui, key, box_el, &rows, current, false);
+        return;
+    }
     let Some(s) = setting(key) else { return };
     let all = (s.choices)(ui);
-    let current = standing(&all, m.settings.get(key)).map_or(String::new(), |c| c.value.clone());
+    // A value typed (not a row) checks none: the default is not what stands.
+    let kept = m.settings.get(key);
+    let typed = kept.is_some_and(|v| s.typed.is_typed(v));
+    let current = if typed { String::new() } else { standing(&all, kept).map_or(String::new(), |c| c.value.clone()) };
     let q = crate::app::query::Query::new(query);
     let mut found: Vec<_> =
         all.iter().filter_map(|c| q.find(c.names.iter().map(String::as_str)).map(|f| (f, c))).collect();
@@ -61,6 +76,28 @@ pub fn open(v: &mut Views, ui: &mut Ui, m: &Models, key: &str, query: &str) {
     let current = listed.iter().position(|c| c.value == current);
     let box_el = v.id(&format!("{key}-drop.drop"));
     fill(v, ui, key, box_el, &rows, current, !q.is_empty());
+    // Each row's colour beside its name (a colour setting).
+    if let Some(swatch) = s.typed.swatch {
+        for (k, c) in listed.iter().enumerate() {
+            let (Some(argb), Some(row)) = (swatch(&c.value), v.doc.get(&format!("dm{k}.item"))) else { continue };
+            let _ = v.doc.instantiate(
+                ui,
+                row,
+                Some(1),
+                "MenuSwatch",
+                &[Val::Color(novaui::argb(argb))],
+                &format!("dm{k}.sw"),
+            );
+        }
+    }
+}
+
+/// Enter in the box of `key` with `text` typed: a value it takes typed (a size, `#RRGGBB`) is
+/// chosen, as a row would be. False: `text` is none (Enter picks the lit row instead).
+pub fn typed(p: &mut Player, ui: &mut Ui, key: &str, text: &str) -> bool {
+    let Some(value) = setting(key).and_then(|s| s.typed.value).and_then(|f| f(text)) else { return false };
+    crate::app::command::run(p, ui, Command::Set { key: key.to_owned(), value });
+    true
 }
 
 /// The list of the dropdown of parameter `id` of the effect at `at` (`settings_page`'s effect
@@ -122,11 +159,14 @@ fn fill(
 ) {
     let list = DropList { key: key.to_owned(), picks: rows.iter().map(|(c, _)| c.clone()).collect(), lit: None };
     let menu = begin(v, ui, Kind::Drop(list));
+    // As wide as its box, wider for longer names (a device's) up to a flyout's widest; it
+    // stands at the box's right edge, so a wider list grows left, over the card, not past it.
     let w = ui.tree.rect(box_el).w as f32 / ui.scale();
+    let widest = v.doc.num("drop_list_w_max").max(w);
     ui.tree.set_layout(menu, |l| {
-        l.width = Len::Px(w);
-        l.min_width = Len::Auto;
-        l.max_width = Len::Auto;
+        l.width = Len::Auto;
+        l.min_width = Len::Px(w);
+        l.max_width = Len::Px(widest);
     });
     for (k, (pick, label)) in rows.iter().enumerate() {
         check_item(v, ui, menu, Some(k) == current, label, "", Some(pick.clone()), true, &format!("dm{k}"));
@@ -135,7 +175,7 @@ fn fill(
         let none = ui.t("drop.none", &[]);
         check_item(v, ui, menu, false, &none, "", None, false, "dm-none");
     }
-    show(v, ui, Place::on(box_el, Side::Below, Along::Start, 4.0), Some(box_el));
+    show(v, ui, Place::on(box_el, Side::Below, Along::End, 4.0), Some(box_el));
     let lit = if typing { (!rows.is_empty()).then_some(0) } else { current };
     if let Some(k) = lit {
         light(v, ui, Some(k));

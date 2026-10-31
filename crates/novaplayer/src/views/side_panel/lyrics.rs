@@ -172,14 +172,28 @@ impl SidePanel {
                     moving = true;
                 }
                 let a = l.x.clamp(0.0, 1.0);
-                let h = ui.tree.size(l.line).1;
+                let measured = ui.tree.size(l.line).1;
+                if measured > 0.0 {
+                    l.full = measured;
+                }
+                let h = l.full;
                 let open = part(h, a);
+                // Whole by its state, not by its measure: a line built this turn is not measured
+                // yet (0 high), and a folded layer must not take its full height from that.
                 let (height, top, dy) =
-                    if open >= h { (Len::Auto, 0.0, 0.0) } else { (Len::Px(open), part(gap, a) - gap, open - h) };
+                    if a >= 1.0 { (Len::Auto, 0.0, 0.0) } else { (Len::Px(open), part(gap, a) - gap, open - h) };
+                // Open by no whole pixel it leaves the group, its gap with it, as a line without
+                // it: folded at rest, the spring's tail about it, a fold not started yet. A box
+                // 0 high held in by a margin as tall as the gap is laid out a gap taller than no
+                // box, so the group grew a gap for a moment and shrank again (the lines shook).
+                // A line never laid out yet stays in while it opens, to be measured.
+                let display =
+                    if a < 1.0 && (h > 0.0 || a <= 0.0) && open * s < 0.5 { Display::None } else { Display::Flex };
                 let ink = Ease::Smooth.at(((a - LAYER_INK_FROM) / (1.0 - LAYER_INK_FROM)).clamp(0.0, 1.0));
                 ui.tree.set_layout(l.wrap, |s| {
                     s.height = height;
                     s.margin[0] = Len::Px(top);
+                    s.display = display;
                 });
                 ui.tree.set_translate(l.line, 0.0, dy);
                 ui.tree.set_opacity(l.wrap, ink);
@@ -192,6 +206,13 @@ impl SidePanel {
     }
 
     /// The lyrics page shows `l`: its state now, its elements at the next present.
+    /// The opening song is known to have lyrics (`index::lyrics_known`), or what it has is
+    /// known now (false): while they are expected, a song with none yet keeps the lyrics page
+    /// (no turn to the queue and back while its file is read).
+    pub fn expect_lyrics(&mut self, on: bool) {
+        self.lyrics_expected = on;
+    }
+
     pub fn set_lyrics(&mut self, l: Option<Lyrics>) {
         self.lyrics = l;
         self.lyric_key = (0, 0);
@@ -202,8 +223,16 @@ impl SidePanel {
         self.lyrics_rail.cancel();
         self.browse = 0.0;
         self.browse_glide.jump(0.0);
-        if self.lyrics.is_none() && self.shown.page == Page::Lyrics {
+        // A song without lyrics (or whose lyrics are still on their way: a song's face lands
+        // first without them) shows the queue; the lyrics page comes back when lyrics come,
+        // unless another page was chosen meanwhile.
+        if self.lyrics.is_none() && self.shown.page == Page::Lyrics && !self.lyrics_expected {
             self.shown.edit().page = Page::Queue;
+            self.lyrics_wanted = true;
+            self.relayout = true;
+        } else if self.lyrics.is_some() && std::mem::take(&mut self.lyrics_wanted) && self.shown.page == Page::Queue {
+            self.shown.edit().page = Page::Lyrics;
+            self.turn_key = None;
             self.relayout = true;
         }
         self.lyrics_stale = true;
@@ -258,6 +287,7 @@ impl SidePanel {
                 style
             }
         };
+        let duet = ly.duet();
         for (gi, g) in ly.groups.iter().enumerate() {
             let Ok(root) = doc.instantiate(ui, col, None, "LyricGroup", &[], &format!("lg{gi}")) else { continue };
             ui.tree.set_action(root, Some("lyric"));
@@ -301,12 +331,13 @@ impl SidePanel {
                             l.shrink = 0.0;
                         });
                         let x = if self.layer_on[li] { 1.0 } else { 0.0 };
-                        layers.push(LayerEl { kind: li, wrap, line: l, x, v: 0.0, wait: 0.0 });
+                        layers.push(LayerEl { kind: li, wrap, line: l, x, v: 0.0, wait: 0.0, full: 0.0 });
                     }
                     Err(e) => eprintln!("lyric style: LyricReading: {e}"),
                 }
             }
-            self.groups.push(GroupEl { root, lines, keys, words: !g.words.is_empty(), window, layers });
+            let far = duet && g.voice >= 2;
+            self.groups.push(GroupEl { root, lines, keys, words: !g.words.is_empty(), window, layers, far });
         }
     }
 
@@ -316,13 +347,17 @@ impl SidePanel {
         // face, they start at its edge.
         let (size, line) = (doc.num("lyric_size"), doc.num("lyric_line"));
         let (rsize, rline) = (doc.num("lyric_reading"), doc.num("lyric_reading_line"));
-        let align = if single { Align::Center } else { Align::Start };
+        // A duet's voices stand apart, the first at the near side and the next at the far one,
+        // in one column too (centred, they could not be told apart).
+        let duet = self.groups.iter().any(|g| g.far);
+        let base = if single && !duet { Align::Center } else { Align::Start };
         let key = (i32::from(single) + 2, (size * 16.0) as i32);
         if key == self.lyric_key {
             return;
         }
         self.lyric_key = key;
         for g in &self.groups {
+            let align = if g.far { Align::End } else { base };
             let layer_lines = g.layers.iter().map(|l| l.line);
             for (j, l) in g.lines.iter().copied().chain(layer_lines).enumerate() {
                 let t = match &ui.tree.el(l).content() {
@@ -362,8 +397,47 @@ impl SidePanel {
         self.lyrics.as_ref().and_then(|l| l.groups.get(g)).map(|g| g.at)
     }
 
+    /// A line was clicked to seek to it: the lyrics glide from where they stand to it, as a
+    /// list glides to the playing song, not jump there (`after_layout`).
     pub fn lyric_pressed(&mut self) {
-        self.browse = 0.0;
-        self.browse_glide.jump(0.0);
+        self.seek_glides = true;
+        self.browse_until = 0.0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A song known to have lyrics (`index::lyrics_known`) keeps the lyrics page while they
+    /// are read: it does not turn to the queue and back with every song (a share's file, read
+    /// cold, took longer than the face's stand-in). One not known as such turns as before.
+    #[test]
+    fn a_song_known_to_have_lyrics_keeps_the_lyrics_page_while_they_come() {
+        let mut ui = novaui::Ui::new(400, 400, 1.0);
+        let mut p = SidePanel::new(&mut ui, Default::default());
+        let lyrics = || Lyrics::parse("[00:01.00]one\n[00:02.00]two\n");
+        p.shown.edit().open = true;
+        p.shown.edit().page = Page::Lyrics;
+        p.set_lyrics(lyrics());
+        // The next song: its lyrics on their way, known to come.
+        p.expect_lyrics(true);
+        p.set_lyrics(None);
+        assert_eq!(p.shown.page, Page::Lyrics, "known to have lyrics: the page stays");
+        p.set_lyrics(lyrics());
+        assert_eq!(p.shown.page, Page::Lyrics);
+        // Its file read, it has none after all: the queue.
+        p.expect_lyrics(true);
+        p.set_lyrics(None);
+        p.expect_lyrics(false);
+        p.set_lyrics(None);
+        assert_eq!(p.shown.page, Page::Queue, "none after all");
+        p.set_lyrics(lyrics());
+        assert_eq!(p.shown.page, Page::Lyrics, "the page comes back with the next lyrics");
+        // Not known: the queue while they come, then back.
+        p.set_lyrics(None);
+        assert_eq!(p.shown.page, Page::Queue);
+        p.set_lyrics(lyrics());
+        assert_eq!(p.shown.page, Page::Lyrics);
     }
 }

@@ -196,6 +196,12 @@ pub enum Job {
         song: Song,
         tags: Option<Box<MediaTags>>,
     },
+    /// The picture the library index knows the local song open at version `song` shows,
+    /// standing while its file is read (`index::known_cover`).
+    KnownCover {
+        song: u64,
+        cover: Option<library::Cover>,
+    },
     /// A cover chosen (or restored) for the folder of the song open at version `song`.
     Cover {
         song: u64,
@@ -345,6 +351,8 @@ impl Player {
             match j {
                 Job::Track { tags, cover, lyrics, cover_editable } => {
                     self.now_playing.cover_editable = cover_editable;
+                    // What the song has, known now: no lyrics turns to the queue.
+                    self.side_panel.expect_lyrics(false);
                     self.apply_now_playing(tags, Art::Now(cover), lyrics, Default::default());
                 }
                 Job::Found(found) => self.side_panel.found(found),
@@ -392,6 +400,12 @@ impl Player {
                     {
                         let mt = tags.as_ref().map(MediaTags::from);
                         self.apply_now_playing(mt, art, lyrics, layers);
+                    }
+                }
+                Job::KnownCover { song, cover } => {
+                    // Only before the song's own face: what the file says comes after it.
+                    if song == self.playback.song_version && self.now_playing.cover_version != song && cover.is_some() {
+                        self.show_open_cover(cover);
                     }
                 }
                 Job::Cover { song, cover } => {
@@ -522,9 +536,18 @@ impl Player {
                     let output = &mut self.playback.output;
                     output.systems = systems;
                     output.listed = true;
-                    let asked = std::mem::take(&mut output.asked);
-                    if asked || self.views(|v, _| crate::views::menus::output::is_up(v)) {
+                    use crate::playback::output::Asked;
+                    let asked = output.asked.take();
+                    if asked == Some(Asked::Flyout) || self.views(|v, _| crate::views::menus::output::is_up(v)) {
                         self.views(|v, m| crate::views::menus::output::open_output_menu(v, ui, m));
+                    }
+                    // A settings dropdown asked for, or open: its list as the outputs are now.
+                    let open = self.views(|v, _| crate::views::menus::output::drop_up(v));
+                    if let Some(key) = open.or(match asked {
+                        Some(Asked::Drop(k)) => Some(k),
+                        _ => None,
+                    }) {
+                        self.views(|v, m| crate::views::menus::dropdown::open(v, ui, m, key, ""));
                     }
                 }
                 Job::ConnectBegun(result) => crate::plugins::connect::begun(self, ui, result),

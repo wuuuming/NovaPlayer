@@ -20,26 +20,35 @@ enum Unread {
 }
 
 impl Player {
-    /// Puts `song` at the end of kept playlist `id` (in its play order as `Queue::append` does),
-    /// wherever the list is now: shown, playing, or only in the store (a list never saved yet is
-    /// empty). Its name; `None` when there is no such list.
+    /// Puts `song` at the end of kept playlist `id` (`add_songs_to`). Its name; `None` when
+    /// there is no such list.
     pub fn add_song_to(&mut self, song: Song, id: u32) -> Option<String> {
+        self.add_songs_to(vec![song], id)
+    }
+
+    /// Puts `songs` at the end of kept playlist `id`, in their order (in its play order as
+    /// `Queue::append` does), wherever the list is now: shown, playing, or only in the store (a
+    /// list never saved yet is empty). Many go in one read and one save: one by one, a second
+    /// read could land before the first one's save and the first song would be lost. Its name;
+    /// `None` when there is no such list.
+    pub fn add_songs_to(&mut self, songs: Vec<Song>, id: u32) -> Option<String> {
+        let shared = |songs: Vec<Song>| songs.into_iter().map(Arc::new).collect::<Vec<_>>();
         if self.lists.shown_list.id == Some(id) {
-            self.lists.shown_list.append(vec![Arc::new(song)]);
+            self.lists.shown_list.append(shared(songs));
             self.shown_list_moved();
             self.schedule_save();
             return Some(self.lists.shown_list.list.name.clone());
         }
         if let Some(q) = self.lists.playing_list.as_mut().filter(|q| q.id == Some(id)) {
-            q.append(vec![Arc::new(song)]);
+            q.append(shared(songs));
             let name = q.list.name.clone();
             self.schedule_save();
             return Some(name);
         }
         let name = self.lists.store.entry(id)?.name.clone();
         // Read on the store's thread after the writes asked before: a save of it still on its
-        // way lands first. The song joins when it lands (`appended`).
-        self.read_list(id, ListFor::Append { id, song: Box::new(song) });
+        // way lands first. The songs join when it lands (`appended`).
+        self.read_list(id, ListFor::Append { id, songs });
         Some(name)
     }
 
@@ -69,24 +78,24 @@ impl Player {
                 self.show_list(ui, list, id, at, false);
                 self.sync_link(ui, false);
             }
-            ListFor::Append { id, song } => self.appended(id, *song, list),
+            ListFor::Append { id, songs } => self.appended(id, songs, list),
             ListFor::Refresh(r) => self.refreshed(ui, *r, list),
             ListFor::Reload(id) => self.reloaded(ui, id, list),
         }
     }
 
-    /// `add_song_to` for a list neither shown nor playing: `list` as the store read it.
-    fn appended(&mut self, id: u32, song: Song, list: Option<crate::library::store::List>) {
-        // Shown or playing by now: it takes the song as such a list does.
+    /// `add_songs_to` for a list neither shown nor playing: `list` as the store read it.
+    fn appended(&mut self, id: u32, songs: Vec<Song>, list: Option<crate::library::store::List>) {
+        // Shown or playing by now: it takes the songs as such a list does.
         if self.lists.shown_list.id == Some(id) || self.lists.playing_list.as_ref().is_some_and(|q| q.id == Some(id)) {
-            self.add_song_to(song, id);
+            self.add_songs_to(songs, id);
             return;
         }
         let Some(e) = self.lists.store.entry(id).cloned() else { return };
         let list = list.unwrap_or_else(|| e.empty_list());
         let mut q = Queue::default();
         q.adopt(list, Some(id));
-        q.append(vec![Arc::new(song)]);
+        q.append(songs.into_iter().map(Arc::new).collect());
         self.lists.store.save(id, q.to_list());
     }
 
@@ -105,6 +114,75 @@ impl Player {
             self.schedule_save();
         }
         self.toast(ui, ui.t(if mv { "toast.moved-to" } else { "toast.added-to" }, &[("name", &name)]));
+    }
+
+    /// 添加到 / 移动到 for the chosen rows (multi-select): the shown list's chosen songs join
+    /// playlist `to` (a new one for `None`) in play order; moved, they leave the shown list and
+    /// the choice goes. The list's current song does not move (`put_row`): it is neither put nor
+    /// taken out by a move.
+    pub fn put_selected(&mut self, ui: &mut Ui, to: Option<u32>, mv: bool) {
+        let cur = self.lists.shown_list.pos;
+        let mut at = self.side_panel.selected_positions(&self.lists.shown_list);
+        if mv {
+            at.retain(|&p| p != cur);
+        }
+        if at.is_empty() || (to.is_some() && to == self.lists.shown_list.id) {
+            return;
+        }
+        let songs: Vec<Song> = at.iter().filter_map(|&p| self.lists.shown_list.song_at(p).cloned()).collect();
+        let n = songs.len();
+        let id = to.unwrap_or_else(|| self.lists.store.create(&ui.t("list.new", &[]), Origin::Made));
+        let Some(name) = self.add_songs_to(songs, id) else { return };
+        if mv {
+            self.remove_positions(&at);
+            self.side_panel.select_none();
+        }
+        let key = if mv { "toast.moved-n-to" } else { "toast.added-n-to" };
+        self.toast(ui, ui.t(key, &[("n", &n.to_string()), ("name", &name)]));
+    }
+
+    /// 删除 for the chosen rows (its second press): they leave the shown list, but its current
+    /// song (`Queue::remove`); the choice goes.
+    pub fn remove_selected(&mut self, ui: &mut Ui) {
+        let cur = self.lists.shown_list.pos;
+        let mut at = self.side_panel.selected_positions(&self.lists.shown_list);
+        at.retain(|&p| p != cur);
+        let n = at.len();
+        if n == 0 {
+            return;
+        }
+        self.remove_positions(&at);
+        self.side_panel.select_none();
+        self.toast(ui, ui.t("toast.removed-n", &[("n", &n.to_string())]));
+    }
+
+    /// The shown list's songs at play positions `at` (ascending) go, the last first so the rest
+    /// stay where they are.
+    fn remove_positions(&mut self, at: &[usize]) {
+        for &p in at.iter().rev() {
+            self.lists.shown_list.remove(p);
+        }
+        self.schedule_save();
+    }
+
+    /// The shown list moved on since its albums were asked for (`Lists::warmed`): the library
+    /// index reads one song of each of its albums with no record, from the song that plays on in
+    /// play order. A turn's, cheap (no file is read here).
+    pub(crate) fn warm_index(&mut self) {
+        if self.lists.warmed == self.lists.list_version {
+            return;
+        }
+        self.lists.warmed = self.lists.list_version;
+        let q = &self.lists.shown_list;
+        let n = q.list.order.len();
+        let from = q.pos.min(n);
+        let songs = (0..n)
+            .map(|k| (from + k) % n)
+            .filter_map(|p| q.song_at(p))
+            .filter(|s| s.probed)
+            .filter_map(|s| Some((s.path.clone(), s.tags.album.clone()?)))
+            .collect();
+        crate::library::index::warm(songs);
     }
 
     /// Sorts the queue by `key`. A sort by a tag needs every song's tags, while only the rows in
@@ -464,7 +542,7 @@ impl Player {
                 }
                 let (changed, gone) = library::changed_since(known.iter().map(|(p, _)| p.as_path()), saved);
                 for &i in &changed {
-                    crate::library::row_cache::invalidate(&known[i].0);
+                    crate::library::index::invalidate(&known[i].0);
                 }
                 let (found, _) = library::songs_for(&path, &|| cancel.cancelled());
                 let fresh =
@@ -716,8 +794,8 @@ pub enum ListFor {
     Restore(u32),
     /// A playlist switched to.
     Show(u32),
-    /// A song put at the end of a list neither shown nor playing (`add_song_to`).
-    Append { id: u32, song: Box<Song> },
+    /// Songs put at the end of a list neither shown nor playing (`add_songs_to`).
+    Append { id: u32, songs: Vec<Song> },
     /// A list refreshed from its source (`refresh_list`).
     Refresh(Box<Refresh>),
     /// The open list edited outside this process.
@@ -750,6 +828,8 @@ pub struct Lists {
     pub playing_list: Option<Queue>,
     /// The open song's list-edit version it belongs to (row tag reads).
     pub list_version: u64,
+    /// The `list_version` whose albums the library index was asked to read ahead (`index::warm`).
+    pub warmed: u64,
     /// A sort asked for while tags were still being read: it lands when they are in.
     pub sort_waiting: Option<(crate::library::queue::Sort, bool)>,
     /// The list whose tags are being read, and how many are left (the sort waits on them).

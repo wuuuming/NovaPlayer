@@ -1,6 +1,7 @@
 //! Flyouts: which one is up and its rows. How a flyout opens, stands and scrolls is novaui's
 //! `widgets::Flyout`.
 pub mod app_menu;
+pub mod copy;
 pub mod cover;
 pub mod drag;
 pub mod dropdown;
@@ -25,8 +26,14 @@ pub enum Kind {
     App,
     Drag,
     Row,
+    /// The chosen rows' menu (multi-select): as wide as its rows (its 删除 asks with a count).
+    Selection,
     Sort,
     Cover,
+    /// The song's words under the artwork (`copy::open_words_menu`).
+    Words,
+    /// A lyric line's (`copy::open_lyric_menu`).
+    Lyric,
     /// The song's option values, for the song opened `song`th (`Playback::song_version`).
     Option {
         song: u64,
@@ -55,7 +62,8 @@ impl Kind {
             Kind::Drag => Some("flyout_w_drag"),
             Kind::Row | Kind::Sort => Some("flyout_w_narrow"),
             Kind::Cover => Some("flyout_w_cover"),
-            Kind::Option { .. } | Kind::Output | Kind::Drop(_) => None,
+            Kind::Words | Kind::Lyric => Some("flyout_w_narrow"),
+            Kind::Option { .. } | Kind::Output | Kind::Drop(_) | Kind::Selection => None,
         }
     }
 }
@@ -79,6 +87,7 @@ pub fn close_menus(v: &mut Views, ui: &mut Ui) {
 pub fn close_plugin_flyout(v: &mut Views, ui: &mut Ui) {
     v.menus.plugin = None;
     v.menus.pick = None;
+    v.menus.copying = false;
     let host = v.id("plugin-flyout");
     if let Some(t) = v.menus.side.close(ui, host) {
         v.menus.clock.at(t);
@@ -212,6 +221,11 @@ pub(crate) fn check_item(
 ) -> Option<Id> {
     let id = item(v, ui, menu, Icon::Checkmark, label, note, command, enabled, prefix)?;
     ui.tree.set_off(v.doc.id(&format!("{prefix}.icon")), !on);
+    // The mark is its look; a screen reader hears which one is checked.
+    ui.tree.set_semantics(id, |s| {
+        s.role = Some(novaui::semantics::Role::MenuItem);
+        s.checked = Some(on);
+    });
     Some(id)
 }
 
@@ -238,7 +252,11 @@ pub struct Menus {
     pub plugin: Option<String>,
     /// The row menu's playlist picker up beside it: the row's position, and whether the song
     /// moves (移动到) rather than is copied (添加到).
-    pub pick: Option<(usize, bool)>,
+    /// The playlist picker beside the row menu: for the row at a play position, or for the
+    /// chosen rows (`None`); whether it moves.
+    pub pick: Option<(Option<usize>, bool)>,
+    /// The words menu's 复制 › choices are up beside it.
+    pub copying: bool,
     /// A carried row's drop target on the heading (8.5).
     pub drag: crate::views::menus::drag::RowDrag,
     /// The playlist being renamed in the playlist flyout (its name box is up).
@@ -256,6 +274,7 @@ impl Menus {
             reveal: Default::default(),
             plugin: Default::default(),
             pick: Default::default(),
+            copying: Default::default(),
             drag: Default::default(),
             rename_id: Default::default(),
         }

@@ -1,9 +1,10 @@
 //! Songs, lyrics, CUE sheets, M3U lists, folder scans and the colour field (spec, "Lyrics" and "Formats, scanning, CUE").
 pub mod covers;
 pub mod disk_cache;
+pub mod index;
 pub mod lists;
 pub mod queue;
-pub mod row_cache;
+mod reading;
 pub mod store;
 
 use crate::playback::engine::Span;
@@ -167,6 +168,10 @@ pub struct Group {
     /// Layer lines laid under it (a translation, a romanisation): (layer id, text), in
     /// `LAYER_ORDER`. Shown or hidden by the player, not part of `lines`.
     pub layers: Vec<(String, String)>,
+    /// Who sings it, in a duet: the `[v1]`, `[v2]` … tag of its line (in the file, or in the
+    /// `.duet.lrc` beside it: `with_voices`; `v1000`, Apple's voices together, sings at the far
+    /// side as a second voice does); 0 when not said.
+    pub voice: u16,
 }
 
 /// The lyrics layers the player knows and draws (docs/extensions.md, "Lyrics layers"), in the order they sit
@@ -311,8 +316,6 @@ fn parse_stamp(tag: &str) -> Option<Duration> {
 impl Lyrics {
     pub fn parse(text: &str) -> Option<Self> {
         let mut offset = 0i64;
-        /// A timed line as read: its time, its text, its words' times (with their bytes in it).
-        type Stamped = (Duration, String, Vec<(Duration, std::ops::Range<usize>)>);
         let mut stamped: Vec<Stamped> = Vec::new();
         for line in text.trim_start_matches('\u{FEFF}').lines() {
             let mut rest = line.trim();
@@ -330,9 +333,17 @@ impl Lyrics {
                 }
                 rest = after.trim_start();
             }
+            // A duet's voice after the stamps: `[v1]`, `[v2]` … (Apple's TTML agents as LRC).
+            let mut voice = 0u16;
+            if let Some((tag, after)) = rest.strip_prefix('[').and_then(|i| i.split_once(']')) {
+                if let Some(n) = tag.strip_prefix('v').and_then(|n| n.parse::<u16>().ok()).filter(|n| *n > 0) {
+                    voice = n;
+                    rest = after.trim_start();
+                }
+            }
             let (shown, words) = split_words(rest.trim());
             for t in times {
-                stamped.push((t, shown.clone(), words.clone()));
+                stamped.push((t, shown.clone(), words.clone(), voice));
             }
         }
         if stamped.is_empty() {
@@ -342,7 +353,7 @@ impl Lyrics {
             let s = i64::try_from(t.as_millis()).unwrap_or(i64::MAX).saturating_sub(offset);
             *t = Duration::from_millis(u64::try_from(s).unwrap_or(0));
         };
-        for (t, _, words) in &mut stamped {
+        for (t, _, words, _) in &mut stamped {
             shift(t);
             words.iter_mut().for_each(|(w, _)| shift(w));
             // Word stamps out of order are not karaoke: the line shows whole-line lit.
@@ -350,9 +361,21 @@ impl Lyrics {
                 words.clear();
             }
         }
+        if stamps_end_words(&stamped) {
+            for (at, line, words, _) in &mut stamped {
+                // Each stamp ends the word after it: a word runs from the stamp before it (the
+                // line's, for the first) to its own; the last stamp is when the line is sung.
+                let n = line.chars().count();
+                let mut start = *at;
+                for (t, _) in words.iter_mut() {
+                    start = std::mem::replace(t, start);
+                }
+                words.push((start, n..n));
+            }
+        }
         stamped.sort_by_key(|(t, ..)| *t);
         let mut groups: Vec<Group> = Vec::new();
-        for (at, w, words) in stamped {
+        for (at, w, words, voice) in stamped {
             match groups.last_mut() {
                 Some(g) if g.at == at => {
                     if !w.is_empty() {
@@ -361,13 +384,18 @@ impl Lyrics {
                         }
                         g.lines.push(w);
                     }
+                    if g.voice == 0 {
+                        g.voice = voice;
+                    }
                 }
                 _ => {
                     let (lines, words) = if w.is_empty() { (Vec::new(), Vec::new()) } else { (vec![w], words) };
-                    groups.push(Group { at, lines, words, layers: Vec::new() });
+                    groups.push(Group { at, lines, words, layers: Vec::new(), voice });
                 }
             }
         }
+        // The lines stamped under each line: the readings and translations they are.
+        reading::sort_layers(&mut groups);
         Some(Lyrics { groups })
     }
 
@@ -400,6 +428,37 @@ impl Lyrics {
         lines.peek().is_some() && lines.all(|g| !g.words.is_empty())
     }
 
+    /// The voices of a duet (`duet`, the `.duet.lrc` beside the song, each line tagged `[v1]`,
+    /// `[v2]` …) given to the groups that do not say theirs: the duet's line of the same stamp
+    /// (within 50 ms), else the one of the same words nearest in time within 2 s (lyrics timed
+    /// apart from the duet file: a container's, a little earlier or later).
+    pub fn with_voices(mut self, duet: Option<&Lyrics>) -> Self {
+        let Some(d) = duet else { return self };
+        let voiced: Vec<&Group> = d.groups.iter().filter(|v| v.voice > 0).collect();
+        let squash = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+        for g in self.groups.iter_mut().filter(|g| g.voice == 0) {
+            let near = voiced.iter().find(|v| v.at.abs_diff(g.at) <= Duration::from_millis(50));
+            let worded = || {
+                let first = squash(g.lines.first()?);
+                voiced
+                    .iter()
+                    .filter(|v| v.at.abs_diff(g.at) <= Duration::from_secs(2))
+                    .filter(|v| v.lines.first().is_some_and(|l| squash(l) == first))
+                    .min_by_key(|v| v.at.abs_diff(g.at))
+            };
+            if let Some(v) = near.or_else(worded) {
+                g.voice = v.voice;
+            }
+        }
+        self
+    }
+
+    /// Sung by more than one voice: the lyrics page stands each voice's lines at its own side.
+    pub fn duet(&self) -> bool {
+        let mut voices = self.groups.iter().map(|g| g.voice).filter(|v| *v > 0);
+        voices.next().is_some_and(|first| voices.any(|v| v != first))
+    }
+
     /// The layer ids some group carries, in `LAYER_ORDER`.
     pub fn layer_ids(&self) -> Vec<&'static str> {
         LAYER_ORDER.into_iter().filter(|id| self.groups.iter().any(|g| g.layers.iter().any(|(l, _)| l == id))).collect()
@@ -415,8 +474,46 @@ impl Lyrics {
     }
 }
 
+/// The song's lyrics of its two sources: the one timed word by word, else the container's
+/// (`embedded`) before the sidecar file (spec "Lyrics", source order). The sidecar is read only
+/// when the container's are not word-timed.
+pub fn choose_lyrics(embedded: Option<Lyrics>, sidecar: impl FnOnce() -> Option<Lyrics>) -> Option<Lyrics> {
+    if embedded.as_ref().is_some_and(Lyrics::word_timed) {
+        return embedded;
+    }
+    match sidecar() {
+        Some(s) if s.word_timed() => Some(s),
+        s => embedded.or(s),
+    }
+}
+
 pub fn sidecar(media: &Path) -> Option<Lyrics> {
     let bytes = std::fs::read(media.with_extension("lrc")).ok()?;
+    Lyrics::parse(&crate::player_core::legacy_text::decode_guessing(&bytes))
+}
+
+/// A timed line as read: its time, its text, its words' times (with their chars in it), its voice.
+type Stamped = (Duration, String, Vec<(Duration, std::ops::Range<usize>)>, u16);
+
+/// Word stamps that end their words, not start them (`<end>word`, as files converted from timed
+/// lyrics with each syllable's end write them): no line's first word is stamped at the line's
+/// time and none has a stamp after its last word, as the usual `<start>word … <end>` does. A
+/// line read the usual way would light each word only once it has been sung.
+fn stamps_end_words(lines: &[Stamped]) -> bool {
+    let timed: Vec<_> = lines.iter().filter(|(_, _, w, _)| !w.is_empty()).collect();
+    if timed.len() < 3 {
+        return false;
+    }
+    let near = |a: Duration, b: Duration| a.abs_diff(b) <= Duration::from_millis(30);
+    let starts_at_line = timed.iter().filter(|(at, _, w, _)| near(w[0].0, *at)).count();
+    let trailing = timed.iter().filter(|(_, _, w, _)| w.last().is_some_and(|(_, r)| r.is_empty())).count();
+    let late = timed.iter().filter(|(at, _, w, _)| w[0].0 > *at + Duration::from_millis(30)).count();
+    trailing == 0 && starts_at_line * 10 <= timed.len() && late * 10 >= timed.len() * 9
+}
+
+/// The duet file beside a local song (`<name>.duet.lrc`): who sings each line (`with_voices`).
+pub fn duet_sidecar(media: &Path) -> Option<Lyrics> {
+    let bytes = std::fs::read(media.with_extension("duet.lrc")).ok()?;
     Lyrics::parse(&crate::player_core::legacy_text::decode_guessing(&bytes))
 }
 
@@ -1132,7 +1229,8 @@ mod tests {
         .unwrap();
         assert_eq!(l.groups.len(), 5);
         assert_eq!(l.groups[0].at, Duration::from_millis(1000));
-        assert_eq!(l.groups[0].lines, vec!["a", "reading"]);
+        assert_eq!(l.groups[0].lines, vec!["a"]);
+        assert_eq!(l.groups[0].layers, [("trans".to_owned(), "reading".to_owned())], "a line under it is a layer");
         assert!(l.groups[4].lines.is_empty());
         assert_eq!(l.current(Duration::from_millis(2600)), Some(1));
         assert_eq!(l.until_next(Duration::from_millis(2000)), Some(Duration::from_millis(500)));
@@ -1193,13 +1291,46 @@ mod rescan_tests {
         assert_eq!(l.layer_ids(), ["roma", "trans"]);
     }
 
+    /// Embedded lyrics timed by line and a word-timed sidecar beside the file: the sidecar's
+    /// (a file of the same lyrics, timed word by word, went unused). Otherwise the container's.
+    #[test]
+    fn word_timed_lyrics_win_over_line_timed() {
+        let line = || Lyrics::parse("[00:01.00]夜に駆ける\n");
+        let word = || Lyrics::parse("[00:01.00]<00:01.00>夜に<00:01.50>駆ける\n");
+        assert!(choose_lyrics(line(), word).unwrap().word_timed(), "the sidecar's words");
+        assert!(choose_lyrics(word(), line).unwrap().word_timed(), "the container's words");
+        assert!(choose_lyrics(line(), || Lyrics::parse("[00:02.00]b\n")).unwrap().groups[0].lines == ["夜に駆ける"]);
+        assert!(choose_lyrics(None, line).is_some());
+    }
+
+    /// Stamps that end their words (each line's first stamp after the line's, none after the
+    /// last word): a word lights from the stamp before it (it lit a word late, as it ended).
+    #[test]
+    fn word_stamps_that_end_their_words() {
+        let text = "[02:05.43]<02:05.85>會<02:06.32>不<02:07.34>會\n\
+                    [02:10.60]<02:11.27>再<02:11.59>回<02:12.20>頭\n\
+                    [02:19.66]<02:20.04>當<02:20.61>漪<02:21.47>漣\n";
+        let l = Lyrics::parse(text).unwrap();
+        let s = |m: u64, ms: u64| Duration::from_millis(m * 60_000 + ms);
+        let w: Vec<_> = l.groups[0].words.iter().map(|(t, r)| (*t, r.clone())).collect();
+        assert_eq!(w, [(s(2, 5430), 0..1), (s(2, 5850), 1..2), (s(2, 6320), 2..3), (s(2, 7340), 3..3)]);
+        // The usual way stays as it was: the first stamp at the line's time.
+        let usual = Lyrics::parse(
+            "[00:01.00]<00:01.00>a <00:01.50>b <00:02.00>\n[00:03.00]<00:03.00>c <00:03.40>d\n[00:05.00]<00:05.00>e\n",
+        )
+        .unwrap();
+        assert_eq!(usual.groups[0].words[0].0, Duration::from_secs(1));
+        assert_eq!(usual.groups[0].words[1].0, Duration::from_millis(1500));
+    }
+
     #[test]
     fn translation_under_each_line() {
         let l = "[00:01.00]夜に駆ける\n[00:03.50]沈むように\n";
         let t = "[00:01.00]向夜晚奔去\n[00:03.50]像是沉没一般\n";
         let both = Lyrics::parse(&format!("{l}\n{t}")).unwrap();
         assert_eq!(both.groups.len(), 2);
-        assert_eq!(both.groups[0].lines, vec!["夜に駆ける".to_string(), "向夜晚奔去".to_string()]);
-        assert_eq!(both.groups[1].lines, vec!["沈むように".to_string(), "像是沉没一般".to_string()]);
+        assert_eq!(both.groups[0].lines, vec!["夜に駆ける".to_string()]);
+        assert_eq!(both.groups[0].layers, [("trans".to_owned(), "向夜晚奔去".to_owned())]);
+        assert_eq!(both.groups[1].layers, [("trans".to_owned(), "像是沉没一般".to_owned())]);
     }
 }

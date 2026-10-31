@@ -7,7 +7,9 @@ use novaui::*;
 /// heading's name brings up the playlists, the open one standing aside, the one under the
 /// pointer lit and saying 加入. It comes and goes as the way in beside the artwork does: up at
 /// once over 167 ms, held while the row is over the name or the playlists, gone 2 s after the
-/// last move on the name or as soon as the row leaves both, out over 333 ms.
+/// last move on the name or shortly after the row leaves both, out over 333 ms. The way from the
+/// name down to the playlists (the box spanning both, between them) counts as the name: a row
+/// carried from a short name to a wider list does not leave on the way.
 #[derive(Default)]
 pub struct RowDrag {
     pub shown: bool,
@@ -20,14 +22,25 @@ pub struct RowDrag {
 }
 
 pub(crate) const DRAG_IDLE: f64 = 2.0;
+/// How long the target stays once the row has left both the name and the playlists: a hand
+/// overshooting the edge comes back without the list going.
+pub(crate) const DRAG_LEAVE: f64 = 0.3;
 
 pub(crate) fn drag_over(p: &mut Player, ui: &mut Ui, x: i32, y: i32) {
+    let s = ui.scale();
+    let (mx, my) = ((8.0 * s).round() as i32, (4.0 * s).round() as i32);
     let name = ui.tree.rect(p.id("pl-name"));
-    let on_name =
-        name.w > 0 && x >= name.x - 8 && x < name.x + name.w + 8 && y >= name.y - 4 && y < name.y + name.h + 4;
     let menu = p.id("flyout");
     let mr = ui.tree.rect(menu);
     let on_menu = p.menus.drag.shown && mr.w > 0 && x >= mr.x && x < mr.x + mr.w && y >= mr.y && y < mr.y + mr.h;
+    let mut on_name =
+        name.w > 0 && x >= name.x - mx && x < name.x + name.w + mx && y >= name.y - my && y < name.y + name.h + my;
+    if p.menus.drag.shown && mr.w > 0 && name.w > 0 && !on_menu {
+        // Between the name and the list, across the width of both.
+        let (l, r) = (name.x.min(mr.x) - mx, (name.x + name.w).max(mr.x + mr.w) + mx);
+        let (t, b) = if mr.y >= name.y { (name.y, mr.y + my) } else { (mr.y + mr.h - my, name.y + name.h) };
+        on_name |= x >= l && x < r && y >= t && y < b;
+    }
     let moved = (x, y) != p.menus.drag.last;
     p.menus.drag.last = (x, y);
     if on_name && !p.menus.drag.shown {
@@ -40,7 +53,8 @@ pub(crate) fn drag_over(p: &mut Player, ui: &mut Ui, x: i32, y: i32) {
     if on_menu {
         p.menus.drag.hide_at = f64::INFINITY;
     } else if !on_name && p.menus.drag.shown {
-        p.menus.drag.hide_at = ui.now();
+        p.menus.drag.hide_at = p.menus.drag.hide_at.min(ui.now() + DRAG_LEAVE);
+        p.menus.clock.at(p.menus.drag.hide_at);
     }
     // The playlist under the pointer, lit.
     let mut over = None;

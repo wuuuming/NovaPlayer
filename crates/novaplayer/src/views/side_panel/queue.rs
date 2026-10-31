@@ -2,6 +2,9 @@
 use super::*;
 use crate::sync::Locked;
 
+/// A row not chosen while multi-select is on.
+const DIMMED: f32 = 0.45;
+
 impl SidePanel {
     // ---- queue ----------------------------------------------------------------------------
 
@@ -112,6 +115,12 @@ impl SidePanel {
         let list = doc.id("q-list");
         ui.tree.set_layout(empty, |l| l.display = if q.is_empty() { Display::Flex } else { Display::None });
         ui.tree.set_layout(list, |l| l.display = if q.is_empty() { Display::None } else { Display::Flex });
+        // Another list (or the list read again): the choice was of its songs.
+        if self.version != list_version {
+            self.select_none();
+        }
+        let selecting = self.select.is_some();
+        ui.tree.set_lit(doc.id("q-select"), selecting);
         if self.version != list_version || force {
             if self.drag.is_some() {
                 ui.cancel_drag();
@@ -122,6 +131,18 @@ impl SidePanel {
             self.scroll = 0.0;
             self.target = 0.0;
             self.follow_current = true;
+            // The list the player last ran with, put at the row it stood at once it is laid
+            // out (`restore`, below); the playing song is not followed into view over it.
+            // Only the first list shown: another before it is laid out drops the kept row.
+            if self.restore_top.is_some() && !q.is_empty() {
+                if self.restore_for.is_none() {
+                    self.restore_for = Some(list_version);
+                    self.follow_current = false;
+                    self.last_pos = q.pos;
+                } else {
+                    self.restore_top = None;
+                }
+            }
         }
         if self.listed_version != q.version {
             self.listed_version = q.version;
@@ -148,6 +169,14 @@ impl SidePanel {
         }
         self.last_rh = rh;
         self.last_lh = lh;
+        if lh > 0.0 && self.restore_for == Some(list_version) {
+            if let Some(top) = self.restore_top.take() {
+                self.scroll = top * rh;
+                self.target = self.scroll;
+                self.glide.jump(self.scroll);
+                self.glided = self.scroll;
+            }
+        }
         if self.queue_rail.grabbed() {
             self.follow_current = false;
             self.last_pos = q.pos;
@@ -204,19 +233,27 @@ impl SidePanel {
         }
         let now = ui.now();
         self.due_thumb_retries(now);
+        if self.drag_tick(now) {
+            self.clock.frame();
+        }
         if self.auto.is_some() {
             self.autoscroll_tick(ui, doc, reach);
         } else if resized && !self.easing {
             // No motion is started by the window's size: the list stands at the same rows.
             self.scroll = goal;
         } else if (self.scroll - goal).abs() > 0.5 {
-            // The scroll every list has (`Glide`, WinUI's offset change): a new end starts a
-            // new glide from where the list stands; its length follows the distance.
+            // The scroll every list has (`Glide`, WinUI's offset change): a new end is taken on
+            // from where the glide is now, at the speed it moves (quick notches, one motion; the
+            // frame of the notch moves too). Only a list put somewhere else since the glide last
+            // stood it (a drag's edge, a reveal) starts afresh from there.
             if (self.glide.target() - goal).abs() > 0.5 || self.glide.done(now) {
-                self.glide.jump(self.scroll);
+                if (self.scroll - self.glided).abs() > 0.5 {
+                    self.glide.jump(self.scroll);
+                }
                 self.glide.to(goal, now, crate::views::SCROLL);
             }
             self.scroll = self.glide.at(now);
+            self.glided = self.scroll;
             self.easing = true;
             if self.glide.done(now) {
                 self.scroll = goal;
@@ -226,6 +263,10 @@ impl SidePanel {
             self.easing = false;
             self.glide.jump(goal);
             self.scroll = goal;
+        }
+        // Kept (`kept_top`): where the whole list stands once it rests, not a search's rows.
+        if self.narrow.is_none() && !self.easing && !q.is_empty() && rh > 0.0 {
+            self.kept_top = ((goal / rh) * 100.0).round() / 100.0;
         }
         // The rows in view (+1 either side), on the framework's virtual list: rows leaving are
         // parked and come back for places entering; a carried row stays live wherever it is,
@@ -259,6 +300,7 @@ impl SidePanel {
                     len: g("len"),
                     remove: g("remove"),
                     grip: g("grip"),
+                    check: g("check"),
                     thumb: g("thumb"),
                     rule: g("rule"),
                     idx: usize::MAX,
@@ -301,6 +343,7 @@ impl SidePanel {
             let pos = positions[place];
             let Some(&idx) = q.list.order.get(pos) else { continue };
             let song = &q.list.songs[idx];
+            self.share_album_picture(song, idx);
             if let Some(at) = self.thumb_lru.iter().position(|&old| old == idx) {
                 self.thumb_lru.remove(at);
                 self.thumb_lru.push(idx);
@@ -312,7 +355,18 @@ impl SidePanel {
             for &id in &[r.root, r.artist, r.album, r.remove, r.grip] {
                 ui.tree.set_tag(id, place as u64);
             }
-            ui.tree.set_layout(r.grip, |l| l.display = if ranked { Display::None } else { Display::Flex });
+            // Multi-select: the row is one target (its links and buttons off), a press swept
+            // across rows chooses them; a chosen row is marked and whole, the rest dimmed.
+            let chosen = self.select.as_ref().map(|s| s.has(idx));
+            ui.tree.set_layout(r.grip, |l| l.display = if ranked || selecting { Display::None } else { Display::Flex });
+            ui.tree
+                .set_layout(r.check, |l| l.display = if chosen == Some(true) { Display::Flex } else { Display::None });
+            ui.tree.set_listen(r.root, novaui::Listen::Drag, selecting);
+            for (id, a) in [(r.artist, "row-artist"), (r.album, "row-album")] {
+                ui.tree.set_action(id, (!selecting).then_some(a));
+                ui.tree.set_visual(id, |v| v.hit = !selecting);
+            }
+            ui.tree.set_opacity(root, if chosen == Some(false) { DIMMED } else { 1.0 });
             if r.idx != idx {
                 r.idx = idx;
                 ui.tree.set_text(name, song.title());
@@ -360,15 +414,18 @@ impl SidePanel {
             });
             let hovered = ui.tree.el(root).hovered();
             // The list's current song neither moves nor goes, playing or not (`Queue::remove`).
-            let show_remove = hovered && pos != q.pos && self.drag.is_none();
+            let show_remove = hovered && pos != q.pos && self.drag.is_none() && !selecting;
             ui.tree.set_layout(r.remove, |l| l.display = if show_remove { Display::Flex } else { Display::None });
             ui.tree.set_layout(r.len, |l| l.display = if show_remove { Display::None } else { Display::Flex });
             ui.tree.set_visible(r.rule, !dragged);
             // Tags / thumbnail wanted for rows in view.
             let needs_tags = song.unread();
-            let needs_thumb = !self.thumbs.contains_key(&idx) && !self.no_thumb.contains(&idx);
+            let needs_thumb =
+                !self.thumbs.contains_key(&idx) && !self.no_thumb.contains(&idx) && self.claim_album_picture(song, idx);
             if (needs_tags || needs_thumb) && self.requested.insert(idx) {
                 let (path, list, inbox) = (song.path.clone(), list_version, inbox.clone());
+                // Its words read already: its album's picture can stand for its own (`index`).
+                let album = if needs_tags { None } else { song.tags.album.clone() };
                 let wanted = self.wanted.clone();
                 let version = self.row_version;
                 let admitted = assets.try_background(move || {
@@ -378,10 +435,10 @@ impl SidePanel {
                     };
                     if !wanted_now() {
                         #[cfg(any(test, feature = "test-support"))]
-                        crate::library::row_cache::skipped();
+                        crate::library::index::skipped();
                         inbox.send(Job::RowSkipped { list, idx, version });
                     } else {
-                        let (tags, thumb) = crate::library::row_cache::load(&path);
+                        let (tags, thumb) = crate::library::index::row(&path, album.as_deref());
                         if wanted_now() {
                             inbox.send(Job::RowTags {
                                 list,
@@ -393,7 +450,7 @@ impl SidePanel {
                         } else {
                             // Retain the useful local result, not an offscreen GPU upload.
                             #[cfg(any(test, feature = "test-support"))]
-                            crate::library::row_cache::skipped();
+                            crate::library::index::skipped();
                             inbox.send(Job::RowSkipped { list, idx, version });
                         }
                     }
@@ -417,6 +474,9 @@ impl SidePanel {
     }
     pub fn row_skipped(&mut self, idx: usize) {
         self.requested.remove(&idx);
+        // Rows of its album in view were waiting for its picture (`claim_album_picture`): one
+        // of them asks now.
+        self.relayout = true;
     }
     /// A song's picture became known after its row asked (an online song's face landed when it
     /// played, its row having asked first and come back empty): the row asks again, now from
@@ -460,7 +520,38 @@ impl SidePanel {
         self.thumb_retry.clear();
         self.thumb_lru.clear();
         self.thumbs.clear();
+        self.albums.clear();
         self.refill_rows();
+    }
+
+    /// A row with no picture yet whose album has one shows it (`albums`): rewritten now.
+    fn share_album_picture(&mut self, song: &crate::library::Song, idx: usize) {
+        if self.thumbs.contains_key(&idx) || self.no_thumb.contains(&idx) {
+            return;
+        }
+        let Some(owner) = album_of(song).and_then(|k| self.albums.get(&k).copied()).filter(|&o| o != idx) else {
+            return;
+        };
+        if let Some(image) = self.thumbs.get(&owner).cloned() {
+            self.requested.remove(&idx);
+            self.keep_thumb(idx, image);
+            self.row_changed(idx);
+        }
+    }
+
+    /// Whether row `idx` reads its own picture: not while another row of its album is reading
+    /// it (the album's picture comes with that one, `share_album_picture`). One that does is
+    /// the album's (a row that went out of view, came back without one or lost its picture to
+    /// the slots gives it up).
+    fn claim_album_picture(&mut self, song: &crate::library::Song, idx: usize) -> bool {
+        let Some(key) = album_of(song) else { return true };
+        match self.albums.get(&key) {
+            Some(&o) if o != idx && self.requested.contains(&o) => false,
+            _ => {
+                self.albums.insert(key, idx);
+                true
+            }
+        }
     }
 
     /// A row's tags (and thumbnail) landed; its row is written again at the next sync.
@@ -470,21 +561,26 @@ impl SidePanel {
             self.no_thumb.insert(idx);
         }
         if let Some(image) = thumb {
-            self.no_thumb.remove(&idx);
-            if self.thumbs.remove(&idx).is_some() {
-                self.thumb_lru.retain(|&i| i != idx);
-            }
-            if self.thumbs.len() >= THUMB_SLOTS {
-                // The least recently made goes; its row (if one shows it) goes back to the note
-                // and asks again when it is in view.
-                let old = self.thumb_lru.remove(0);
-                self.row_changed(old);
-                self.thumbs.remove(&old);
-            }
-            self.thumbs.insert(idx, image);
-            self.thumb_lru.push(idx);
+            self.keep_thumb(idx, image);
         }
         self.row_changed(idx);
+    }
+
+    /// Row `idx`'s picture, in the slots (`THUMB_SLOTS`).
+    fn keep_thumb(&mut self, idx: usize, image: novaui::ImageHandle) {
+        self.no_thumb.remove(&idx);
+        if self.thumbs.remove(&idx).is_some() {
+            self.thumb_lru.retain(|&i| i != idx);
+        }
+        if self.thumbs.len() >= THUMB_SLOTS {
+            // The least recently made goes; its row (if one shows it) goes back to the note
+            // and asks again when it is in view.
+            let old = self.thumb_lru.remove(0);
+            self.row_changed(old);
+            self.thumbs.remove(&old);
+        }
+        self.thumbs.insert(idx, image);
+        self.thumb_lru.push(idx);
     }
 
     /// How far the queue list scrolls with `n` rows in a list `lh` high: never below 0.
@@ -632,39 +728,57 @@ impl SidePanel {
 
     pub fn drag_start(&mut self, place: usize, grab_y: f32) {
         self.drag = Some((place, place as f32 * self.row_h(), grab_y));
+        self.drag_pointer = None;
     }
 
     /// A drag that ended without a move: the rows go back to their places on the next sync.
     pub fn end_drag(&mut self) {
         self.drag = None;
+        self.drag_pointer = None;
         self.relayout = true;
     }
 
-    /// Pointer at `y` dips from the list top: returns true if the list should keep scrolling.
-    pub fn drag_to(&mut self, y: f32, lh: f32, dt: f32) -> bool {
-        let Some((from, _, grab)) = self.drag else { return false };
-        let n = self.positions.len();
-        let edge = 48.0;
-        let pull = if y < edge {
-            -(1.0 - y / edge).clamp(0.0, 1.0)
-        } else if y > lh - edge {
-            (1.0 - (lh - y) / edge).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        let reach = self.reach(n, lh);
-        if pull != 0.0 {
-            self.target = (self.target.min(reach) + pull * 12.0 * self.row_h() * dt).clamp(0.0, reach);
-            self.scroll = self.target;
+    /// Pointer at `y` dips from the list top (`lh` tall), at `now`: the carried row follows it.
+    /// Within 48 dips of either end the list scrolls under it (`drag_tick`, frame by frame):
+    /// returns true then, a frame wanted.
+    pub fn drag_to(&mut self, y: f32, lh: f32, now: f64) -> bool {
+        if self.drag.is_none() {
+            return false;
         }
-        // The row stays in the list's view while it is carried (it follows the pointer within
-        // it; past either end the list scrolls under it instead).
-        let last = n.saturating_sub(1) as f32 * self.row_h();
+        // Its time runs from when it came near an end: the time held between them scrolls nothing.
+        let held = self.drag_pointer.filter(|p| drag_pull(p.0, p.1) != 0.0).map(|p| p.2);
+        self.drag_pointer = Some((y, lh, held.unwrap_or(now)));
+        self.carry_row();
+        drag_pull(y, lh) != 0.0
+    }
+
+    /// One frame of a carried row held near an end: the list scrolls by the time gone, 12 rows
+    /// a second at the very end (by the pointer's moves it went a sixtieth of a second each,
+    /// as fast as the mouse reported and not at all held still). True while it goes on.
+    pub(super) fn drag_tick(&mut self, now: f64) -> bool {
+        let Some((y, lh, last)) = self.drag_pointer.filter(|_| self.drag.is_some()) else { return false };
+        let dt = ((now - last) as f32).clamp(0.0, 0.1);
+        self.drag_pointer = Some((y, lh, now));
+        let pull = drag_pull(y, lh);
+        if pull == 0.0 {
+            return false;
+        }
+        let reach = self.reach(self.positions.len(), lh);
+        self.target = (self.target.min(reach) + pull * 12.0 * self.row_h() * dt).clamp(0.0, reach);
+        self.scroll = self.target;
+        self.carry_row();
+        true
+    }
+
+    /// The carried row where the pointer holds it, in the list's view (it follows the pointer
+    /// within it; past either end the list scrolls under it instead).
+    fn carry_row(&mut self) {
+        let (Some((from, _, grab)), Some((y, lh, _))) = (self.drag, self.drag_pointer) else { return };
+        let last = self.positions.len().saturating_sub(1) as f32 * self.row_h();
         let ry = (y + self.scroll - grab)
             .clamp(self.scroll, (self.scroll + lh - self.row_h()).max(self.scroll))
             .clamp(0.0, last);
         self.drag = Some((from, ry, grab));
-        pull != 0.0
     }
 
     /// Drop: (from, to) in play positions.
@@ -780,4 +894,28 @@ impl SidePanel {
     fn rail_wake(&mut self, ui: &Ui, wake: Option<f64>) {
         crate::views::rail_wake(&self.clock, ui, wake);
     }
+}
+
+/// How hard a carried row at `y` pulls the list (`lh` tall): -1 at the top end to 1 at the
+/// bottom, within 48 dips of either; 0 between.
+fn drag_pull(y: f32, lh: f32) -> f32 {
+    const EDGE: f32 = 48.0;
+    if y < EDGE {
+        -(1.0 - y / EDGE).clamp(0.0, 1.0)
+    } else if y > lh - EDGE {
+        (1.0 - (lh - y) / EDGE).clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+/// The album a local song's row shares its picture with (`SidePanel::albums`): its folder and
+/// its album's name. None for an online song (its plugin keeps each song's picture), a song with
+/// no album, or one whose tags are not read yet.
+fn album_of(song: &crate::library::Song) -> Option<(std::path::PathBuf, String)> {
+    if crate::plugins::client::parse(&song.path).is_some() {
+        return None;
+    }
+    let album = song.tags.album.as_deref().map(str::trim).filter(|a| !a.is_empty())?;
+    Some((song.path.parent()?.to_path_buf(), album.to_lowercase()))
 }

@@ -13,8 +13,8 @@ pub mod toast;
 pub mod transport;
 
 /// How everything that scrolls moves (the queue, the lyrics, the info page, the settings page,
-/// the import list, the flyouts): NovaUI's `Glide` on WinUI's curve.
-pub(crate) const SCROLL: novaui::anim::GlideSkin = novaui::anim::GlideSkin::WINUI;
+/// the import list, the flyouts): NovaUI's `Glide` on its standard skin.
+pub(crate) const SCROLL: novaui::anim::GlideSkin = novaui::anim::GlideSkin::STANDARD;
 
 /// The scroll rail's skin (`rail_*` in `player.nui`): the queue's, the lyrics' and a scrolling
 /// flyout's are the one rail.

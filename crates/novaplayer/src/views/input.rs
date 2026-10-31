@@ -37,6 +37,14 @@ fn handle_event(p: &mut Player, ui: &mut Ui, ev: Event) {
         return;
     }
     match ev {
+        // Multi-select: a row takes drags (a sweep), so its press and release come as a press
+        // and a drag's end: let go without a sweep, it chooses the row or lets it go; Shift,
+        // from the last row pressed alone (`select_release`).
+        Event::Press { id, .. } if p.side_panel.selecting() && row_place(p, ui, id).is_some() => {
+            if let Some(place) = row_place(p, ui, id) {
+                p.side_panel.select_down(place, ui.press_mods().shift);
+            }
+        }
         Event::Click { id, action: Some(a) } => {
             if let Some(c) = crate::app::command::of_press(p, ui, id, &a) {
                 run(p, ui, c);
@@ -68,10 +76,21 @@ fn handle_event(p: &mut Player, ui: &mut Ui, ev: Event) {
                 if p.playback.output.listed {
                     p.views(|v, m| open_output_menu(v, ui, m));
                 } else {
-                    p.playback.output.asked = true;
+                    p.playback.output.asked = Some(crate::playback::output::Asked::Flyout);
                 }
+            } else if ui.tree.is_descendant(id, p.id("words-block")) {
+                p.views(|v, _| crate::views::menus::copy::open_words_menu(v, ui, x, y));
+            } else if let Some(g) = lyric_group(p, ui, id) {
+                p.views(|v, _| crate::views::menus::copy::open_lyric_menu(v, ui, g, x, y));
             } else if id == p.id("cover") && p.playback.opened {
                 p.views(|v, m| open_cover_menu(v, ui, m, x, y));
+            } else if let Some(place) = row_place(p, ui, id).filter(|_| p.side_panel.selecting()) {
+                // The chosen rows' menu; a row not chosen is chosen first (it is what was pressed).
+                let song = p.side_panel.pos_of(place).and_then(|pos| p.lists.shown_list.list.order.get(pos)).copied();
+                if song.is_some_and(|s| !p.side_panel.selection().is_some_and(|c| c.has(s))) {
+                    p.side_panel.select_press(&p.lists.shown_list, place, false);
+                }
+                p.views(|v, m| crate::views::menus::row::open_selection_menu(v, ui, m, x, y));
             } else if let Some(place) = row_place(p, ui, id) {
                 p.views(|v, m| open_row_menu(v, ui, m, place, x, y));
             }
@@ -106,6 +125,14 @@ fn handle_event(p: &mut Player, ui: &mut Ui, ev: Event) {
                 run(p, ui, c);
             }
         }
+        // Multi-select: a press on a row swept across others chooses (or lets go of) them all.
+        Event::DragStart { id, .. }
+            if p.side_panel.selecting() && ui.tree.el(id).action().is_some_and(|a| a.is("row")) =>
+        {
+            if let Some(place) = row_place(p, ui, id) {
+                p.side_panel.sweep_start(&p.lists.shown_list, place);
+            }
+        }
         Event::DragStart { id, y, .. } => {
             if let Some(place) =
                 row_place(p, ui, id).filter(|_| ui.tree.el(id).action().is_some_and(|a| a.is("row-grip")))
@@ -114,6 +141,10 @@ fn handle_event(p: &mut Player, ui: &mut Ui, ev: Event) {
                 let grab = y_list - place as f32 * p.side_panel.row_h();
                 p.side_panel.drag_start(place, grab);
             }
+        }
+        Event::Drag { y, .. } if p.side_panel.sweeping() => {
+            let place = p.side_panel.place_at(queue_y(p, ui, y));
+            p.side_panel.sweep_to(&p.lists.shown_list, place);
         }
         Event::Drag { id, x, y } => {
             if id == p.id("track") && p.transport.scrub.is_some() {
@@ -127,12 +158,13 @@ fn handle_event(p: &mut Player, ui: &mut Ui, ev: Event) {
                 }
             } else if p.side_panel.drag.is_some() {
                 let (_, lh) = ui.tree.size(p.id("q-list"));
-                if p.side_panel.drag_to(queue_y(p, ui, y), lh, 1.0 / 60.0) {
+                if p.side_panel.drag_to(queue_y(p, ui, y), lh, ui.now()) {
                     p.side_panel.clock.frame();
                 }
                 drag_over(p, ui, x, y);
             }
         }
+        Event::DragEnd { .. } if p.side_panel.select_release(&p.lists.shown_list) => {}
         Event::DragEnd { id, x, y } => {
             if id == p.id("track") {
                 if let (Some(_), Some(d)) = (p.transport.scrub.take(), p.playback.snap.duration) {
@@ -163,6 +195,7 @@ fn handle_event(p: &mut Player, ui: &mut Ui, ev: Event) {
             }
         }
         Event::DragCancel { .. } => {
+            p.side_panel.sweep_end();
             p.side_panel.end_drag();
             drag_end(p, ui);
             p.transport.scrub = None;
@@ -208,8 +241,11 @@ fn handle_event(p: &mut Player, ui: &mut Ui, ev: Event) {
                 }
             }
             // Enter in a dropdown's box picks the lit row; with none, it only leaves the box.
-            Some(Command::DropTyped(_)) => {
-                crate::views::menus::dropdown::pick(p, ui);
+            Some(Command::DropTyped(key)) => {
+                // A value typed whole (a size, a colour) before the row the keys are on.
+                if !crate::views::menus::dropdown::typed(p, ui, &key, &text) {
+                    crate::views::menus::dropdown::pick(p, ui);
+                }
                 ui.set_focus(None);
             }
             _ => {}
@@ -263,8 +299,9 @@ fn handle_event(p: &mut Player, ui: &mut Ui, ev: Event) {
                 p.settings_page.reveal(ui, &mut p.doc, id);
             }
         }
-        // The player's window is no overlay: it is never moved as one.
-        Event::Message(_) | Event::WindowFocus(_) | Event::Moved => {}
+        // The window moved or was resized: where it stands is kept (`Player::note_window`).
+        Event::Moved => p.presentation.notify(),
+        Event::Message(_) | Event::WindowFocus(_) => {}
     }
 }
 
@@ -313,6 +350,16 @@ pub(crate) fn key(p: &mut Player, ui: &mut Ui, vk: u32, mods: Mods) {
         }
         return;
     }
+    // Multi-select (outside a text field, whose Ctrl+A is its own): Shift+Ctrl+A turns it on or
+    // off, Ctrl+A while it is on chooses every row shown (again, none).
+    if vk == novaui::input::key::letter('A') && mods.ctrl && !mods.alt && ui.focused_field().is_none() {
+        if mods.shift {
+            run(p, ui, Command::Select);
+        } else if p.side_panel.selecting() {
+            run(p, ui, Command::SelectAll);
+        }
+        return;
+    }
     if mods.ctrl || mods.alt {
         return;
     }
@@ -340,6 +387,9 @@ pub(crate) fn key(p: &mut Player, ui: &mut Ui, vk: u32, mods: Mods) {
         ESCAPE => {
             if p.settings_page.open && ui.focused_field().is_none() {
                 p.settings_page.show(ui, &mut p.doc, false);
+            } else if p.side_panel.selecting() && ui.focused_field().is_none() {
+                // Esc leaves multi-select (the choice goes), before anything else it would do.
+                run(p, ui, Command::Select);
             } else if ui.window.fullscreen() {
                 ui.window.set_fullscreen(false);
             } else if p.side_panel.second_level() && ui.focused_field().is_none() {
@@ -364,6 +414,22 @@ fn form_plugin(p: &Player, ui: &Ui, id: Id) -> Option<String> {
         crate::views::settings_page::Level::Plugin(x) => Some(x.clone()),
         _ => None,
     }
+}
+
+/// The lyric group `id` is in (the lyrics page's lines), if it is in one.
+fn lyric_group(p: &Player, ui: &Ui, id: Id) -> Option<usize> {
+    let page = p.id("lyrics-pane");
+    let mut cur = Some(id);
+    while let Some(c) = cur {
+        if ui.tree.el(c).action().is_some_and(|a| a.name == "lyric") {
+            return Some(ui.tree.el(c).tag() as usize);
+        }
+        if c == page {
+            return None;
+        }
+        cur = ui.tree.parent(c);
+    }
+    None
 }
 
 /// Where the pointer is from the queue list's top, in dips (window pixel `y`).
