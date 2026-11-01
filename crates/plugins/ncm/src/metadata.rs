@@ -58,32 +58,8 @@ impl Client {
                 }
             }
         }
-        // lyric.js (the classic endpoint): plain LRC text, not lyric_new's JSON lines.
-        let lyric = json::obj(vec![
-            ("id", Value::Num(id as f64)),
-            ("tv", Value::Num(-1.0)),
-            ("lv", Value::Num(-1.0)),
-            ("rv", Value::Num(-1.0)),
-            ("kv", Value::Num(-1.0)),
-            ("_nmclfl", Value::Num(1.0)),
-        ]);
-        if let Ok(a) = self.call("song/lyric", lyric, token) {
-            let empty = a.body.get("nolyric").and_then(Value::as_bool).unwrap_or(false)
-                || a.body.get("uncollected").and_then(Value::as_bool).unwrap_or(false);
-            if !empty {
-                if let Some(l) = a.body.at(&["lrc", "lyric"]).and_then(Value::as_str).filter(|l| !l.trim().is_empty()) {
-                    out.push(("lyrics".into(), Value::str(l)));
-                    // The translation (tv = -1) and the romanisation (rv = -1): LRCs of the same
-                    // stamps.
-                    let layer =
-                        |k: &str| a.body.at(&[k, "lyric"]).and_then(Value::as_str).filter(|t| kit::layers::is_lrc(t));
-                    let (trans, roma) = (layer("tlyric"), layer("romalrc"));
-                    if trans.is_some() || roma.is_some() {
-                        out.push(("layers".into(), kit::layers::layers(trans, roma)));
-                    }
-                }
-            }
-        }
+        // Word by word where the song has it (`song/lyric/v1`'s yrc), else the plain LRC.
+        out.extend(self.lyrics(id, token));
         out
     }
 }

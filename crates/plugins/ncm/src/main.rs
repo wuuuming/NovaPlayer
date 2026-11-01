@@ -6,6 +6,7 @@
 
 mod api;
 mod crypto;
+mod lyrics;
 mod metadata;
 mod quality;
 

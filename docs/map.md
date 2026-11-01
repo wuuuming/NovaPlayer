@@ -32,6 +32,7 @@ ui/player.nui    every layout rule and placement; the app sets state bindings on
 ui/*.txt         string tables (zh-CN, en the fallback)
 crates/plugin-protocol   JSON value, parser (depth ≤ 64), line limits, API version
 crates/plugins/          kit (pipe loop, HTTP, M3U8, util) and the service plugins (ncm, qqmusic)
+                         ncm/src/lyrics.rs: YRC word timing to enhanced LRC, translation/romanisation layers
 tools/                   ci.py (fmt, build, clippy, unit tests), bump.py (pins), portable.py
                          (the Windows or Linux zip), readings.py (search readings from Unihan)
 .github/workflows/       ci.yml (main, PRs), release.yml (after CI on a new version: the release; by hand: artifacts)
