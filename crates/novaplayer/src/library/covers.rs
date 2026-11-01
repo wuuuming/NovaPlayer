@@ -1,7 +1,7 @@
 //! A song's artwork: a cover the listener chose for its folder, else the picture in its file,
 //! else the nearest image the album marks as its cover (`resolve`). And each folder's listing,
 //! read once a run: its pictures, and every file's size and time, by which the library index
-//! knows a song's file has not changed (`stamp`) and that a song has lyrics beside it.
+//! knows a song's file has not changed (`stamp`).
 //!
 //! Chosen covers live under `%LOCALAPPDATA%\NovaPlayer\chosen-covers` (never beside the
 //! song): `index.txt` maps a folder (hex of its lowercased path) to a JPEG named by the folder's
@@ -121,15 +121,6 @@ pub(crate) fn stamp_of(m: &std::fs::Metadata) -> (u64, u64) {
 pub fn stamp(file: &Path) -> Option<(u64, u64)> {
     let l = list(file.parent()?);
     l.stamps.get(&file.file_name()?.to_string_lossy().to_lowercase()).copied()
-}
-
-/// Whether timed lyrics lie beside `song` (`<name>.lrc`, `library::sidecar`), by its folder's
-/// listing.
-pub fn lyrics_beside(song: &Path) -> bool {
-    let Some(name) = song.with_extension("lrc").file_name().map(|n| n.to_string_lossy().to_lowercase()) else {
-        return false;
-    };
-    song.parent().is_some_and(|f| list(f).stamps.contains_key(&name))
 }
 
 /// Every folder is listed again when next asked (tests: a new run).

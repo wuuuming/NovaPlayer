@@ -180,9 +180,6 @@ pub struct SidePanel {
     /// The lyrics page was showing when the lyrics went (a song without them, or not yet with
     /// them): it comes back with lyrics (`set_lyrics`), unless a page is chosen meanwhile.
     lyrics_wanted: bool,
-    /// The song's lyrics are known to be on their way (`expect_lyrics`): while they are, the
-    /// lyrics page stays.
-    lyrics_expected: bool,
     /// The kept top row to put the queue at when its list is first shown (`restore`).
     restore_top: Option<f32>,
     /// The list version the kept row is for (the first list shown that has rows).
@@ -345,7 +342,6 @@ impl SidePanel {
             open_amount: Default::default(),
             open: Default::default(),
             lyrics_wanted: Default::default(),
-            lyrics_expected: Default::default(),
             restore_top: Default::default(),
             restore_for: Default::default(),
             kept_top: Default::default(),

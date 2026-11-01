@@ -351,8 +351,6 @@ impl Player {
             match j {
                 Job::Track { tags, cover, lyrics, cover_editable } => {
                     self.now_playing.cover_editable = cover_editable;
-                    // What the song has, known now: no lyrics turns to the queue.
-                    self.side_panel.expect_lyrics(false);
                     self.apply_now_playing(tags, Art::Now(cover), lyrics, Default::default());
                 }
                 Job::Found(found) => self.side_panel.found(found),

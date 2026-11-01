@@ -153,7 +153,7 @@ makes them.
 | `library/store.rs` | playlists on disk: index and lists, `Origin`, `Entry`, `List`, the writer thread, the watcher |
 | `library/lists.rs` | `Lists` (shown and playing list), add, import from links, sync, rescan, sort, tags, save, switch |
 | `library/disk_cache.rs` | `DiskCache`: files kept by a source's key under a budget, grouped (a folder, a plugin), shared blobs by content; the index in memory from one listing |
-| `library/index.rs` | the library index: songs' records (file stamp, words, picture, has lyrics), albums' pictures, pictures by content (thumbnail, face), reading ahead on its own thread |
+| `library/index.rs` | the library index: songs' records (file stamp, words, picture), albums' pictures, pictures by content (thumbnail, face), reading ahead on its own thread |
 | `library/covers.rs` | which picture a song shows (`resolve`: chosen, file, folder), chosen covers, folder listings (images, each file's size and time) |
 | `playback/engine.rs` | `Engine`, `Cmd`, `Snapshot`, `NextSong`, `Recover`; probes |
 | `playback/session.rs` | opening songs, the hand-over, the face's arrival and stand-in, transport actions |

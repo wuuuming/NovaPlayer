@@ -119,9 +119,6 @@ impl Player {
             self.set_track_text("", "", "", "", false);
         }
         let path = song.path.clone();
-        // A song the index knows has lyrics keeps the lyrics page while they are read (it does
-        // not turn to the queue and back); one not known as such turns as it always did.
-        self.side_panel.expect_lyrics(crate::library::index::lyrics_known(&path) == Some(true));
         // A song of a plugin's list reports its plays (services that ask for them).
         crate::plugins::client::play_event(&self.plugin.accounts, &path, "start", at);
         let task = if crate::plugins::client::parse(&path).is_some() {

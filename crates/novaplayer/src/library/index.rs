@@ -2,7 +2,7 @@
 //! disk (`disk_cache`, `index-v1` in the data folder), it holds three kinds of record:
 //!
 //! - a song's (by its path, in its folder's group): its file's size and time when it was read,
-//!   its words, the picture it shows and whether it has lyrics;
+//!   its words and the picture it shows;
 //! - an album's (by its folder and its album's name, in the folder's group): the picture of the
 //!   first of its songs read, and which file that was. The album's other songs show it before
 //!   their own files are read: an album's files carry the same picture, often thousands of pixels
@@ -27,7 +27,7 @@ use crate::library::{self, covers, disk_cache, disk_cache::DiskCache, store, Cov
 use crate::player_core::MediaTags;
 use crate::sync::Locked;
 use novaui::ImageHandle;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -81,7 +81,6 @@ struct Record {
     tags: Tags,
     /// The picture it shows (`covers::resolve`'s, by content).
     picture: Option<String>,
-    lyrics: bool,
 }
 
 /// A song's record, as far as its file goes.
@@ -92,19 +91,12 @@ enum Kept {
     None,
 }
 
-/// What this run knows of a song (the UI's questions are answered from memory).
-#[derive(Clone, Debug, Default)]
-struct Known {
-    lyrics: bool,
-}
-
 struct Index {
     disk: DiskCache,
     /// The albums being read (`album_turn`): another reader of one waits for its picture.
     reading: (Mutex<std::collections::HashSet<String>>, Condvar),
     /// Moves with every record forgotten: a read begun before is not kept.
     version: AtomicU64,
-    known: Mutex<HashMap<PathBuf, Known>>,
     #[cfg(any(test, feature = "test-support"))]
     stats: Mutex<Stats>,
 }
@@ -143,18 +135,17 @@ fn encode(path: &Path, r: &Record) -> String {
         ..Default::default()
     };
     format!(
-        "{HEAD}stamp {} {}\npicture {}\nlyrics {}\n{}",
+        "{HEAD}stamp {} {}\npicture {}\n{}",
         r.stamp.0,
         r.stamp.1,
         r.picture.as_deref().unwrap_or("-"),
-        u8::from(r.lyrics),
         store::encode_list(&list)
     )
 }
 
 fn decode(bytes: &[u8], path: &Path) -> Option<Record> {
     let text = std::str::from_utf8(bytes).ok()?.strip_prefix(HEAD)?;
-    let mut lines = text.splitn(4, '\n');
+    let mut lines = text.splitn(3, '\n');
     let mut stamp = lines.next()?.strip_prefix("stamp ")?.split(' ');
     let stamp = (stamp.next()?.parse().ok()?, stamp.next()?.parse().ok()?);
     let picture = match lines.next()?.strip_prefix("picture ")? {
@@ -162,10 +153,15 @@ fn decode(bytes: &[u8], path: &Path) -> Option<Record> {
         id if id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()) => Some(id.to_owned()),
         _ => return None,
     };
-    let lyrics = lines.next()?.strip_prefix("lyrics ")? == "1";
-    let mut list = store::decode_list(lines.next()?)?;
+    let rest = lines.next()?;
+    // A record kept before said whether the song had lyrics (a line read past).
+    let rest = match rest.strip_prefix("lyrics ") {
+        Some(r) => r.split_once('\n')?.1,
+        None => rest,
+    };
+    let mut list = store::decode_list(rest)?;
     let song = std::sync::Arc::unwrap_or_clone(list.songs_mut().pop()?);
-    (song.path == path).then_some(Record { stamp, tags: song.tags, picture, lyrics })
+    (song.path == path).then_some(Record { stamp, tags: song.tags, picture })
 }
 
 /// A picture's face as kept: the picture itself when it is at most `FACE_SIDE` a side (as it
@@ -206,7 +202,6 @@ impl Index {
             disk: DiskCache::open(root, BUDGET, ENTRIES),
             reading: Default::default(),
             version: AtomicU64::new(0),
-            known: Mutex::new(HashMap::new()),
             #[cfg(any(test, feature = "test-support"))]
             stats: Mutex::new(Stats::default()),
         }
@@ -225,7 +220,6 @@ impl Index {
             self.forget(path);
             return Kept::Stale;
         }
-        self.known.locked().insert(path.to_owned(), Known { lyrics: r.lyrics });
         Kept::Good(Box::new(r))
     }
 
@@ -318,8 +312,8 @@ impl Index {
         Some(f)
     }
 
-    /// Reads song `path`'s file: its words, its picture (`covers::resolve`), whether it has
-    /// lyrics (its lyrics too, with `lyrics`), and keeps its record, and its album's when the
+    /// Reads song `path`'s file: its words, its picture (`covers::resolve`), its lyrics with
+    /// `lyrics`, and keeps its record, and its album's when the
     /// album has none. A file that does not read keeps nothing (a share that is away is not
     /// taken for a song with nothing).
     fn read(&self, path: &Path, lyrics: bool) -> FileRead {
@@ -331,21 +325,17 @@ impl Index {
         let stamp = covers::stamp(path).or_else(|| std::fs::metadata(path).ok().map(|m| covers::stamp_of(&m)));
         let mut tags = crate::playback::engine::probe(path);
         let bytes = covers::resolve(path, tags.as_mut().and_then(|t| t.cover.take()));
-        let embedded = tags.as_ref().and_then(|t| t.lyrics.as_deref()).and_then(Lyrics::parse);
-        let (lyrics, has) = if lyrics {
-            let l = library::choose_lyrics(embedded, || library::sidecar(path))
-                .map(|l| l.with_voices(library::duet_sidecar(path).as_ref()));
-            let has = l.is_some();
-            (l, has)
-        } else {
-            let has = embedded.is_some() || covers::lyrics_beside(path);
-            (None, has)
-        };
+        let lyrics = lyrics
+            .then(|| {
+                let embedded = tags.as_ref().and_then(|t| t.lyrics.as_deref()).and_then(Lyrics::parse);
+                library::choose_lyrics(embedded, || library::sidecar(path))
+                    .map(|l| l.with_voices(library::duet_sidecar(path).as_ref()))
+            })
+            .flatten();
         let picture = bytes.map(|b| (disk_cache::key(&b), b));
         if let (Some(t), Some(stamp)) = (&tags, stamp) {
             if self.version.load(Ordering::Acquire) == version {
-                let r =
-                    Record { stamp, tags: Tags::from(t), picture: picture.as_ref().map(|p| p.0.clone()), lyrics: has };
+                let r = Record { stamp, tags: Tags::from(t), picture: picture.as_ref().map(|p| p.0.clone()) };
                 let group = group(path);
                 self.put(&group, &disk_cache::path_key(path), SONG, encode(path, &r).as_bytes());
                 // The album's picture: this song's when the album has none that holds (none
@@ -365,7 +355,6 @@ impl Index {
                         self.put(&group, &key, ALBUM, format!("{id}\n{name}").as_bytes());
                     }
                 }
-                self.known.locked().insert(path.to_owned(), Known { lyrics: has });
             }
         }
         FileRead { tags, picture, lyrics }
@@ -478,14 +467,12 @@ impl Index {
     fn forget(&self, path: &Path) {
         self.version.fetch_add(1, Ordering::AcqRel);
         self.disk.forget(&disk_cache::path_key(path));
-        self.known.locked().remove(path);
     }
 
     fn forget_folder(&self, folder: &Path) {
         self.version.fetch_add(1, Ordering::AcqRel);
         // The folder's songs' records and its albums', together.
         self.disk.forget_group(&disk_cache::path_key(folder));
-        self.known.locked().retain(|p, _| p.parent() != Some(folder));
     }
 }
 
@@ -588,12 +575,6 @@ pub fn open(path: &Path) -> Opened {
 /// read of its file: what stands while the file is read (a worker's).
 pub fn known_cover(path: &Path, album: Option<&str>) -> Option<Cover> {
     index().known_cover(path, album)
-}
-
-/// Whether a song has lyrics, as far as this run knows (a read of its file, or its record):
-/// from memory, for the UI.
-pub fn lyrics_known(path: &Path) -> Option<bool> {
-    index().known.locked().get(path).map(|k| k.lyrics)
 }
 
 /// The records of `path` forgotten (its file changed: a rescan).
@@ -720,12 +701,11 @@ pub fn stats() -> Stats {
     *index().stats.locked()
 }
 
-/// A new run, as far as the index knows: folders are listed again, nothing is known in memory
-/// (what is kept on disk stays).
+/// A new run, as far as the index knows: folders are listed again (what is kept on disk
+/// stays).
 #[cfg(feature = "test-support")]
 pub fn new_run() {
     covers::forget_listings();
-    index().known.locked().clear();
 }
 
 /// Waits until reading ahead has nothing left (tests).
@@ -769,15 +749,18 @@ mod tests {
             stamp: (1234, 5678),
             tags: Tags { title: Some("Song".into()), album: Some("Album".into()), ..Default::default() },
             picture: Some("0123456789abcdef0123456789abcdef".into()),
-            lyrics: true,
         };
         let text = encode(&path, &r);
         assert_eq!(decode(text.as_bytes(), &path), Some(r.clone()));
         assert_eq!(decode(text.as_bytes(), Path::new(r"D:\music\Album\02 Other.flac")), None, "another song's");
         assert_eq!(decode(&text.as_bytes()[..text.len() / 2], &path), None, "cut short");
         assert_eq!(decode(text.replace("picture 0123", "picture zz23").as_bytes(), &path), None);
-        let none = Record { picture: None, lyrics: false, ..r };
+        let none = Record { picture: None, ..r.clone() };
         assert_eq!(decode(encode(&path, &none).as_bytes(), &path), Some(none));
+        // One kept before records lost their line on lyrics still reads.
+        let kept = text.replacen("\nNVPLAYLIST", "\nlyrics 1\nNVPLAYLIST", 1);
+        assert_ne!(kept, text);
+        assert_eq!(decode(kept.as_bytes(), &path), Some(r));
     }
 
     /// An album is its folder and its name (the name in any case; the folder in any case where

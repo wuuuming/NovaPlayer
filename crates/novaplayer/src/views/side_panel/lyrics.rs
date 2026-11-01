@@ -206,13 +206,6 @@ impl SidePanel {
     }
 
     /// The lyrics page shows `l`: its state now, its elements at the next present.
-    /// The opening song is known to have lyrics (`index::lyrics_known`), or what it has is
-    /// known now (false): while they are expected, a song with none yet keeps the lyrics page
-    /// (no turn to the queue and back while its file is read).
-    pub fn expect_lyrics(&mut self, on: bool) {
-        self.lyrics_expected = on;
-    }
-
     pub fn set_lyrics(&mut self, l: Option<Lyrics>) {
         self.lyrics = l;
         self.lyric_key = (0, 0);
@@ -226,7 +219,7 @@ impl SidePanel {
         // A song without lyrics (or whose lyrics are still on their way: a song's face lands
         // first without them) shows the queue; the lyrics page comes back when lyrics come,
         // unless another page was chosen meanwhile.
-        if self.lyrics.is_none() && self.shown.page == Page::Lyrics && !self.lyrics_expected {
+        if self.lyrics.is_none() && self.shown.page == Page::Lyrics {
             self.shown.edit().page = Page::Queue;
             self.lyrics_wanted = true;
             self.relayout = true;
@@ -409,35 +402,26 @@ impl SidePanel {
 mod tests {
     use super::*;
 
-    /// A song known to have lyrics (`index::lyrics_known`) keeps the lyrics page while they
-    /// are read: it does not turn to the queue and back with every song (a share's file, read
-    /// cold, took longer than the face's stand-in). One not known as such turns as before.
+    /// A song whose lyrics are not there yet shows the queue; the lyrics page comes back when
+    /// they come, unless another page was chosen meanwhile.
     #[test]
-    fn a_song_known_to_have_lyrics_keeps_the_lyrics_page_while_they_come() {
+    fn the_queue_shows_until_the_lyrics_come() {
         let mut ui = novaui::Ui::new(400, 400, 1.0);
         let mut p = SidePanel::new(&mut ui, Default::default());
         let lyrics = || Lyrics::parse("[00:01.00]one\n[00:02.00]two\n");
         p.shown.edit().open = true;
         p.shown.edit().page = Page::Lyrics;
         p.set_lyrics(lyrics());
-        // The next song: its lyrics on their way, known to come.
-        p.expect_lyrics(true);
+        // The next song: its lyrics on their way.
         p.set_lyrics(None);
-        assert_eq!(p.shown.page, Page::Lyrics, "known to have lyrics: the page stays");
+        assert_eq!(p.shown.page, Page::Queue, "the queue while they come");
         p.set_lyrics(lyrics());
-        assert_eq!(p.shown.page, Page::Lyrics);
-        // Its file read, it has none after all: the queue.
-        p.expect_lyrics(true);
+        assert_eq!(p.shown.page, Page::Lyrics, "the lyrics page comes back with them");
+        // The queue chosen meanwhile (closed and opened again): it stays.
         p.set_lyrics(None);
-        p.expect_lyrics(false);
-        p.set_lyrics(None);
-        assert_eq!(p.shown.page, Page::Queue, "none after all");
+        p.toggle(0.0, Page::Queue);
+        p.toggle(0.0, Page::Queue);
         p.set_lyrics(lyrics());
-        assert_eq!(p.shown.page, Page::Lyrics, "the page comes back with the next lyrics");
-        // Not known: the queue while they come, then back.
-        p.set_lyrics(None);
-        assert_eq!(p.shown.page, Page::Queue);
-        p.set_lyrics(lyrics());
-        assert_eq!(p.shown.page, Page::Lyrics);
+        assert_eq!(p.shown.page, Page::Queue, "a page chosen meanwhile stays");
     }
 }
