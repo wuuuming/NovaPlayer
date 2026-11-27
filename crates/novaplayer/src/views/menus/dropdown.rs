@@ -35,7 +35,7 @@ fn name_kept(ui: &mut Ui, doc: &mut Doc, key: &str, value: Option<&str>) {
     let Some(s) = setting(key) else { return };
     let label = if key == "font" && value.unwrap_or_default().is_empty() {
         // Naming the default at startup doesn't require enumerating installed fonts.
-        ui.t("font.default", &[])
+        crate::views::settings_page::default_font_label(ui)
     } else {
         let rows = (s.choices)(ui);
         let row = rows.iter().find(|c| Some(c.value.as_str()) == value);

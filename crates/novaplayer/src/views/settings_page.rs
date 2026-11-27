@@ -1038,9 +1038,13 @@ fn apply_locale(ui: &mut Ui, _: &mut Views, value: Option<&str>) -> bool {
     set_locale(ui, value)
 }
 
+pub(super) fn default_font_label(ui: &Ui) -> String {
+    ui.t("font.default", &[])
+}
+
 /// The default, bundled Noto Sans, then every installed family, by every name it has.
 fn font_choices(ui: &Ui) -> Vec<Choice> {
-    let label = ui.t("font.default", &[]);
+    let label = default_font_label(ui);
     let mut rows = vec![Choice { names: vec![label.clone()], label, value: String::new() }];
     for f in system_fonts() {
         let mut names: Vec<String> = f.names.iter().map(|(_, n)| n.clone()).collect();
