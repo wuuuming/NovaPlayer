@@ -389,7 +389,7 @@ fn count_no_device(s: &mut Snapshot, n: &mut u64) {
 
 /// A song's length as the snapshot shows it: its span's, else the container's less the start.
 fn shown_length(span: Option<Span>, full: Option<Duration>) -> Option<Duration> {
-    span.and_then(|s| s.length()).or(full.map(|d| span.map_or(d, |s| d.saturating_sub(s.start)))).or(full)
+    span.and_then(|s| s.length()).or_else(|| full.map(|d| d.saturating_sub(Span::offset(span))))
 }
 
 /// Whether `path` is read over a network, `url` the address it was resolved to.
@@ -785,8 +785,8 @@ fn worker(
                 if let Some(mut o) = cur.take() {
                     let _ = o.player.dispose();
                 }
-                let version = st.snap.locked().version;
-                *st.write() = Snapshot::fresh(version, seeks, no_device, held);
+                let mut snap = st.write();
+                *snap = Snapshot::fresh(snap.version, seeks, no_device, held);
                 changed = true;
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}

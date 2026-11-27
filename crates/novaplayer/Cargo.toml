@@ -15,14 +15,14 @@ count-allocs = []
 test-support = []
 
 [dependencies]
-novaui = { git = "https://github.com/wuuuming/NovaUI.git", rev = "083ae8127de566939ced735087dcee16e502e9bd" }
+novaui = { git = "https://github.com/wuuuming/NovaUI.git", rev = "1cd55ba57084ba8c21d82bf6f4f41faa300e8b0b" }
 sha2 = "=0.11.0"
 image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png", "webp", "bmp"] }
 # Deflate for the online-metadata cache (already in the build through png).
 miniz_oxide = "=0.8.9"
 
 novaplayer-plugin-protocol = { path = "../plugin-protocol" }
-player-core = { git = "https://github.com/wuuuming/Player-Core.git", rev = "edc5100a250b028d114d78cc803d92b961334679" }
+player-core = { git = "https://github.com/wuuuming/Player-Core.git", rev = "0305ba4b8f1940ca06669dc18ad3fca058782193" }
 
 [target.'cfg(windows)'.dependencies]
 # A plugin's cover fetched over http(s) (the plugin kit's version): Windows' own TLS (SChannel)
@@ -40,13 +40,13 @@ secret-service = { version = "=5.1.0", features = ["rt-async-io-crypto-rust"] }
 # Checks the fonts the build script downloads.
 sha2 = "0.10"
 # The image effects' GPU programs compiled at build time (NovaUI's).
-novaui-shaders = { git = "https://github.com/wuuuming/NovaUI.git", rev = "083ae8127de566939ced735087dcee16e502e9bd" }
+novaui-shaders = { git = "https://github.com/wuuuming/NovaUI.git", rev = "1cd55ba57084ba8c21d82bf6f4f41faa300e8b0b" }
 
 [dev-dependencies]
 # Headless drivers (screenshots, increment audits) draw through `novaui::backend`.
-novaui = { git = "https://github.com/wuuuming/NovaUI.git", rev = "083ae8127de566939ced735087dcee16e502e9bd", features = ["backend"] }
+novaui = { git = "https://github.com/wuuuming/NovaUI.git", rev = "1cd55ba57084ba8c21d82bf6f4f41faa300e8b0b", features = ["backend"] }
 # Tests play on player-core's null output (no device).
-player-core = { git = "https://github.com/wuuuming/Player-Core.git", rev = "edc5100a250b028d114d78cc803d92b961334679", features = ["test-support"] }
+player-core = { git = "https://github.com/wuuuming/Player-Core.git", rev = "0305ba4b8f1940ca06669dc18ad3fca058782193", features = ["test-support"] }
 
 [lints]
 workspace = true

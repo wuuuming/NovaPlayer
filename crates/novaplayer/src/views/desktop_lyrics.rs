@@ -249,8 +249,7 @@ pub(crate) fn present(d: &mut DesktopLyrics, ui: &mut Ui, button: Id, frame: Opt
         return;
     };
     let versions = (f.track.version(), f.layers_off.version());
-    if d.link.is_some()
-        && d.versions == versions
+    if d.versions == versions
         && d.sent.title == f.title
         && d.sent.artist == f.artist
         && d.sent.clock == f.clock

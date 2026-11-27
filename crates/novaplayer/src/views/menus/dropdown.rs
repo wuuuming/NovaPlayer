@@ -4,7 +4,7 @@
 //! (`settings_page::SETTINGS`), or an effect's parameter with a few values (`open_param`).
 use crate::app::{Models, Player, Views};
 use crate::views::menus::*;
-use crate::views::settings_page::{setting, SETTINGS};
+use crate::views::settings_page::{setting, Setting, SETTINGS};
 use novaui::dsl::Doc;
 use novaui::*;
 
@@ -26,13 +26,13 @@ fn standing<'a>(rows: &'a [Choice], value: Option<&str>) -> Option<&'a Choice> {
 pub fn apply(ui: &mut Ui, v: &mut Views, key: &str, value: Option<&str>) {
     let Some(s) = setting(key) else { return };
     let value = if (s.apply)(ui, v, value) { value } else { None };
-    name_kept(ui, v.doc, key, value);
+    name_kept(ui, v.doc, s, value);
 }
 
 /// Names `value` (as kept) in the box of `key`: a text, or the text of a box that takes typing.
 /// A typed value (`Typed::value`) is named as it is kept.
-fn name_kept(ui: &mut Ui, doc: &mut Doc, key: &str, value: Option<&str>) {
-    let Some(s) = setting(key) else { return };
+fn name_kept(ui: &mut Ui, doc: &mut Doc, s: &Setting, value: Option<&str>) {
+    let key = s.key;
     let label = if key == "font" && value.unwrap_or_default().is_empty() {
         // Naming the default at startup doesn't require enumerating installed fonts.
         crate::views::settings_page::default_font_label(ui)
@@ -126,7 +126,9 @@ pub fn open_param(v: &mut Views, ui: &mut Ui, m: &Models, at: usize, id: u32) {
 
 /// A box that takes typing left (Esc, a press elsewhere, a pick): it names the kept choice again.
 pub fn left_box(v: &mut Views, ui: &mut Ui, m: &Models, key: &str) {
-    name_kept(ui, v.doc, key, m.settings.get(key));
+    if let Some(s) = setting(key) {
+        name_kept(ui, v.doc, s, m.settings.get(key));
+    }
 }
 
 /// While a dropdown's box takes typing, it stands without its plate (as the search box does).

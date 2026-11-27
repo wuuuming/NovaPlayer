@@ -639,7 +639,7 @@ dependencies = [
 [[package]]
 name = "cpal"
 version = "0.15.3"
-source = "git+https://github.com/wuuuming/Player-Core.git?rev=edc5100a250b028d114d78cc803d92b961334679#edc5100a250b028d114d78cc803d92b961334679"
+source = "git+https://github.com/wuuuming/Player-Core.git?rev=0305ba4b8f1940ca06669dc18ad3fca058782193#0305ba4b8f1940ca06669dc18ad3fca058782193"
 dependencies = [
  "alsa",
  "asio-sys",
@@ -1387,7 +1387,7 @@ checksum = "490cc448043f947bae3cbee9c203358d62dbee0db12107a74be5c30ccfd09771"
 [[package]]
 name = "media-io"
 version = "0.0.1"
-source = "git+https://github.com/wuuuming/Player-Core.git?rev=edc5100a250b028d114d78cc803d92b961334679#edc5100a250b028d114d78cc803d92b961334679"
+source = "git+https://github.com/wuuuming/Player-Core.git?rev=0305ba4b8f1940ca06669dc18ad3fca058782193#0305ba4b8f1940ca06669dc18ad3fca058782193"
 
 [[package]]
 name = "memchr"
@@ -1524,7 +1524,7 @@ dependencies = [
 [[package]]
 name = "nova-icons"
 version = "0.0.1"
-source = "git+https://github.com/wuuuming/NovaUI.git?rev=083ae8127de566939ced735087dcee16e502e9bd#083ae8127de566939ced735087dcee16e502e9bd"
+source = "git+https://github.com/wuuuming/NovaUI.git?rev=1cd55ba57084ba8c21d82bf6f4f41faa300e8b0b#1cd55ba57084ba8c21d82bf6f4f41faa300e8b0b"
 
 [[package]]
 name = "novaplayer"
@@ -1583,7 +1583,7 @@ dependencies = [
 [[package]]
 name = "novaui"
 version = "0.0.1"
-source = "git+https://github.com/wuuuming/NovaUI.git?rev=083ae8127de566939ced735087dcee16e502e9bd#083ae8127de566939ced735087dcee16e502e9bd"
+source = "git+https://github.com/wuuuming/NovaUI.git?rev=1cd55ba57084ba8c21d82bf6f4f41faa300e8b0b#1cd55ba57084ba8c21d82bf6f4f41faa300e8b0b"
 dependencies = [
  "ab_glyph",
  "ab_glyph_rasterizer",
@@ -1618,7 +1618,7 @@ dependencies = [
 [[package]]
 name = "novaui-shaders"
 version = "0.0.1"
-source = "git+https://github.com/wuuuming/NovaUI.git?rev=083ae8127de566939ced735087dcee16e502e9bd#083ae8127de566939ced735087dcee16e502e9bd"
+source = "git+https://github.com/wuuuming/NovaUI.git?rev=1cd55ba57084ba8c21d82bf6f4f41faa300e8b0b#1cd55ba57084ba8c21d82bf6f4f41faa300e8b0b"
 dependencies = [
  "naga",
 ]
@@ -1934,7 +1934,7 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 [[package]]
 name = "player-core"
 version = "0.0.1"
-source = "git+https://github.com/wuuuming/Player-Core.git?rev=edc5100a250b028d114d78cc803d92b961334679#edc5100a250b028d114d78cc803d92b961334679"
+source = "git+https://github.com/wuuuming/Player-Core.git?rev=0305ba4b8f1940ca06669dc18ad3fca058782193#0305ba4b8f1940ca06669dc18ad3fca058782193"
 dependencies = [
  "asio-sys",
  "cc",
