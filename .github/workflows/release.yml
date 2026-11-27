@@ -132,7 +132,9 @@ jobs:
         with:
           shared-key: release
       - name: package
-        run: xvfb-run -a python3 tools/portable.py --sw
+        run: |
+          xvfb-run -a python3 tools/portable.py --sw
+          unzip -l target/dist-portable/NovaPlayer-Linux-*.zip | grep -q libavformat.so.62
       - name: plugins
         run: python3 tools/plugins.py
       - uses: actions/upload-artifact@v7

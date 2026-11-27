@@ -5,7 +5,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 use crate::playback::engine::{Cmd, Engine, Snapshot};
 use crate::player_core::{
-    audio_output_available, use_null_audio_output, AudioPlayer, TrackHint, UrlAudioSourceFactory,
+    audio_output_available, use_null_audio_output, AudioPlayer, AudioTrackSelection, UrlAudioSourceFactory,
 };
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
@@ -127,17 +127,17 @@ fn wait(engine: &Engine, condition: impl Fn(&Snapshot) -> bool) -> Snapshot {
 }
 
 #[test]
-#[ignore = "needs ffmpeg/ffprobe and PulseAudio; run alone on a disposable null sink"]
+#[ignore = "needs PulseAudio; run alone on a disposable null sink"]
 fn http_playback_pause_seek_and_failure() {
     use_null_audio_output(false);
     assert!(audio_output_available(), "a real PulseAudio server is required, not clock-only playback");
     let server = Server::start();
     let url = server.url("/tone.wav?token=a%2Fb+cd&v=1");
-    // Unknown duration takes the ffprobe path too. No path normalization may alter the query.
+    // Unknown duration takes the native probe path too. No path normalization may alter the query.
     let factory = Arc::new(UrlAudioSourceFactory::new(&url, Default::default()));
     // player-core keeps `silent`/`duration` private; sound is required above, and the engine
     // run below checks the 3 s end.
-    let player = AudioPlayer::open(factory, TrackHint, Arc::new(|| {}), None).unwrap();
+    let player = AudioPlayer::open(factory, AudioTrackSelection::Default, Arc::new(|| {}), None).unwrap();
     drop(player);
 
     let engine = Engine::new(Arc::new(|| {}), Default::default(), crate::player_core::clap::Effects::new());

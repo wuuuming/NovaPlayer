@@ -17,12 +17,12 @@ the commit Cargo.toml pins, so BUILD-INFO.json names exactly what is inside. The
                                             README.txt, BUILD-INFO.json
   NovaPlayer-Linux-x64-<commit>.zip         novaplayer, the Noto fonts, licences, NovaPlayer.sh
                                             (keeps all data in ./Data), README.txt,
-                                            BUILD-INFO.json; FFmpeg is the system's
+                                            BUILD-INFO.json and replaceable FFmpeg libraries
   *.sha256                                  beside it
 
 Service plugins are packaged on their own: tools/plugins.py writes target/dist-plugins/.
 
-The FFmpeg DLLs are the ones the build staged (the audio-only LGPL build Player-Core carries in
+The FFmpeg libraries are the ones the build staged (the audio-only LGPL build Player-Core carries in
 its source tree). The source the LGPL asks for is a separate companion,
 NovaPlayer-FFmpeg-source-<rev>.zip, which the release workflow makes and publishes with the
 package. The package is extracted and started once (temp data folder) before it is published.
@@ -75,7 +75,7 @@ delete it to start over. Running ./novaplayer directly uses ~/.local/share/NovaP
 Nothing is installed; no root is needed.
 
 From the system it needs:
-  - ffmpeg and ffprobe on the PATH (decoding; e.g. apt install ffmpeg)
+  - GnuTLS (libgnutls.so.30) and system CA certificates for HTTPS
   - PulseAudio or PipeWire (libpulse.so.0) for sound
   - Wayland or X11, and a Vulkan driver; without one: ./NovaPlayer.sh --backend sw (X11)
 The Noto fonts are included. Service plugins come as separate packages.
@@ -89,7 +89,7 @@ attach Data/NovaPlayer as a whole: it holds your plugin sign-ins.
 LICENCE
 NovaPlayer, NovaUI and Player-Core are Apache-2.0 or MIT (licenses/); the source of the commits
 in BUILD-INFO.json is at https://github.com/wuuuming. The Noto fonts are under the SIL OFL 1.1
-(fonts/OFL.txt). FFmpeg is not included: the system's own is used.
+(fonts/OFL.txt). FFmpeg is included under the LGPL; its matching source is in the companion zip.
 """
 
 README = """NovaPlayer {version} portable - Windows 10/11 x64
@@ -193,8 +193,9 @@ def vc_redist():
 
 def ffmpeg_info(bin_dir):
     """What the FFmpeg DLLs say about themselves: version, licence, configuration."""
-    os.add_dll_directory(bin_dir)
-    avutil = ctypes.CDLL(os.path.join(bin_dir, "avutil-60.dll"))
+    if WINDOWS:
+        os.add_dll_directory(bin_dir)
+    avutil = ctypes.CDLL(os.path.join(bin_dir, "avutil-60.dll" if WINDOWS else "libavutil.so.60"))
     lines = []
     for fn in ("av_version_info", "avutil_license", "avutil_configuration"):
         f = getattr(avutil, fn)
@@ -321,6 +322,12 @@ def package_linux(stage, version, date, short, commit, deps, sw):
     os.makedirs(lic)
     os.makedirs(os.path.join(pkg, "fonts"))
     shutil.copy2(os.path.join(RELEASE, "novaplayer"), pkg)
+    for lib in ("libavcodec.so.62", "libavfilter.so.11", "libavformat.so.62", "libavutil.so.60", "libswresample.so.6"):
+        shutil.copy2(os.path.join(RELEASE, lib), pkg)
+    ffmpeg_build, _ = ffmpeg_info(RELEASE)
+    shutil.copy2(os.path.join(RELEASE, "FFmpeg-LICENSE.txt"), os.path.join(lic, "FFmpeg-LGPL-2.1.txt"))
+    shutil.copy2(os.path.join(RELEASE, "FFmpeg-ORIGIN.txt"), lic)
+    open(os.path.join(lic, "FFmpeg-build.txt"), "w", newline="\n", encoding="utf-8").write(ffmpeg_build)
     for f in glob.glob(os.path.join(fonts, "*.ttf")) + [os.path.join(fonts, "OFL.txt")]:
         shutil.copy2(f, os.path.join(pkg, "fonts"))
     for f in ("LICENSE-APACHE", "LICENSE-MIT"):
@@ -330,7 +337,7 @@ def package_linux(stage, version, date, short, commit, deps, sw):
     os.chmod(launch, 0o755)
     readme = README_LINUX.format(version=version, commit=short, date=date, glibc=glibc)
     open(os.path.join(pkg, "README.txt"), "w", encoding="utf-8", newline="\n").write(readme)
-    build_info(pkg, version, date, short, commit, deps, [], {"glibc": glibc})
+    build_info(pkg, version, date, short, commit, deps, [], {"glibc": glibc, "ffmpeg": dict(l.split(": ", 1) for l in ffmpeg_build.splitlines())})
     start_check(pkg, sw)
     zip_path = os.path.join(stage, name + ".zip")
     write_zip(pkg, name, zip_path)

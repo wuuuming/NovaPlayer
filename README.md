@@ -52,7 +52,7 @@ extract it anywhere and start it. Nothing gets installed.
 
 - **Windows 10 or 11** (x64): run `Launch.cmd`. FFmpeg and the fonts are included.
 - **Linux** (x86-64, glibc 2.35 or newer, e.g. Ubuntu 22.04 or Debian 12): run `./NovaPlayer.sh`.
-  You need `ffmpeg` and `ffprobe`, PulseAudio or PipeWire, and a Vulkan driver (without one, start
+  You need GnuTLS for HTTPS, PulseAudio or PipeWire, and a Vulkan driver (without one, start
   it with `--backend sw`).
 
 Started that way, your playlists, settings and plugin sign-ins live in a `Data` folder next to the
@@ -87,8 +87,7 @@ cargo build --release
 ```
 
 The first build downloads what isn't in the repository, each pinned by checksum: FFmpeg (Windows)
-and the Noto fonts. The program is `target/release/novaplayer`. On Linux it needs `ffmpeg`,
-`ffprobe` and PulseAudio or PipeWire at run time.
+and the Noto fonts. The program is `target/release/novaplayer`. On Linux it ships FFmpeg's shared libraries and needs GnuTLS and PulseAudio or PipeWire at run time.
 
 ## Contributing
 

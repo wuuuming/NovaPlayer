@@ -148,6 +148,9 @@ fn fetch(url: &str, sha256: &str, path: &Path) -> bool {
 fn manifest() {
     println!("cargo:rerun-if-changed=novaplayer.manifest");
     let msvc = std::env::var("CARGO_CFG_TARGET_ENV").is_ok_and(|e| e == "msvc");
+    if std::env::var("CARGO_CFG_TARGET_OS").is_ok_and(|o| o == "linux") {
+        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN");
+    }
     let windows = std::env::var("CARGO_CFG_TARGET_OS").is_ok_and(|o| o == "windows");
     let Some(dir) = std::env::var_os("CARGO_MANIFEST_DIR").map(PathBuf::from) else { return };
     if windows && msvc {

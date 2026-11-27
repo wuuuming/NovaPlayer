@@ -58,8 +58,7 @@ stops it; `--dirty` overrides and marks the package), and writes it with its `.s
   (`NovaPlayer-FFmpeg-source-<rev>.zip`: FFmpeg's source at the commit and Player-Core's
   tools/ffmpeg-audio scripts that build it, made by the release workflow) out with it.
 - **Linux**, `NovaPlayer-Linux-x64-<commit>.zip`: `novaplayer` without ASIO, the fonts and the
-  licences, `NovaPlayer.sh` (data in `./Data`), `README.txt` and `BUILD-INFO.json`; FFmpeg is the
-  system's. Built on the oldest glibc it should run on.
+  licences, `NovaPlayer.sh` (data in `./Data`), `README.txt` and `BUILD-INFO.json`; the five replaceable FFmpeg libraries and their LGPL licence and origin are included. Built on the oldest glibc it should run on.
 
 Either starts the packaged program once with a throwaway data folder and only its own libraries
 (`--sw`: on the software renderer, for a machine without a GPU; on Linux under an X server). The
@@ -85,7 +84,7 @@ private, NovaPlayer's workflows reach them with the secret `NOVA_READ_TOKEN` (Co
 On a Wayland desktop NovaUI uses Wayland (`platform/wayland.rs`); X11 windows
 (`platform/x11.rs`) are shown through XWayland where asked for.
 
-Network audio (L5: system `ffmpeg`/`ffprobe` and a PulseAudio / PipeWire server). It serves a
+Network audio (L5: bundled FFmpeg and a PulseAudio / PipeWire server). It serves a
 generated WAV over loopback HTTP and checks URL queries, duration, play/pause/seek/EOF, and that
 HTTP 404 becomes an error rather than queue advancement. An isolated null sink keeps the sound
 off the speakers:

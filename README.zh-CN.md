@@ -45,7 +45,7 @@ NovaPlayer 播放你手里已有的音乐文件，在封面旁边同步显示歌
 
 - **Windows 10 / 11**（x64）：运行 `Launch.cmd`。FFmpeg 和字体都已带上。
 - **Linux**（x86-64，glibc 2.35 以上，比如 Ubuntu 22.04、Debian 12）：运行 `./NovaPlayer.sh`。
-  需要系统里有 `ffmpeg` 和 `ffprobe`、PulseAudio 或 PipeWire，以及 Vulkan 驱动（没有的话加
+  需要系统里有 GnuTLS、PulseAudio 或 PipeWire，以及 Vulkan 驱动（没有的话加
   `--backend sw` 启动）。
 
 这样启动时，播放列表、设置和插件的登录信息都放在程序旁边的 `Data` 文件夹里，整个文件夹拷到 U 盘也能
@@ -77,7 +77,7 @@ cargo build --release
 ```
 
 第一次构建会自动下载仓库里没有的东西，每样都按校验和固定：FFmpeg（Windows）和 Noto 字体。程序在
-`target/release/novaplayer`。Linux 上运行时需要 `ffmpeg`、`ffprobe`，以及 PulseAudio 或 PipeWire。
+`target/release/novaplayer`。Linux 上随附 FFmpeg 共享库，运行时需要 GnuTLS，以及 PulseAudio 或 PipeWire。
 
 ## 参与
 

@@ -22,7 +22,7 @@ image = { version = "=0.25.10", default-features = false, features = ["jpeg", "p
 miniz_oxide = "=0.8.9"
 
 novaplayer-plugin-protocol = { path = "../plugin-protocol" }
-player-core = { git = "https://github.com/wuuuming/Player-Core.git", rev = "0e803cc64c1eb884671f7e2c1f7b160563983d29" }
+player-core = { git = "https://github.com/wuuuming/Player-Core.git", rev = "edc5100a250b028d114d78cc803d92b961334679" }
 
 [target.'cfg(windows)'.dependencies]
 # A plugin's cover fetched over http(s) (the plugin kit's version): Windows' own TLS (SChannel)
@@ -46,7 +46,7 @@ novaui-shaders = { git = "https://github.com/wuuuming/NovaUI.git", rev = "b0a678
 # Headless drivers (screenshots, increment audits) draw through `novaui::backend`.
 novaui = { git = "https://github.com/wuuuming/NovaUI.git", rev = "b0a678f17a000e993f54804073cf07598b6ac0cd", features = ["backend"] }
 # Tests play on player-core's null output (no device).
-player-core = { git = "https://github.com/wuuuming/Player-Core.git", rev = "0e803cc64c1eb884671f7e2c1f7b160563983d29", features = ["test-support"] }
+player-core = { git = "https://github.com/wuuuming/Player-Core.git", rev = "edc5100a250b028d114d78cc803d92b961334679", features = ["test-support"] }
 
 [lints]
 workspace = true
