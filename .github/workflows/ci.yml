@@ -47,6 +47,10 @@ jobs:
       - if: runner.os == 'Windows'
         uses: ./.github/actions/setup-asio
       - uses: Swatinem/rust-cache@v2
+      # The Rust cache keeps Player-Core's compiled crate, not the FFmpeg runtime files
+      # its build script stages next to the executables. Rebuild just that package.
+      - name: restage native audio libraries
+        run: cargo clean --locked -p player-core --profile ci
       - name: fmt, build, clippy, unit tests
         run: python tools/ci.py
         env:

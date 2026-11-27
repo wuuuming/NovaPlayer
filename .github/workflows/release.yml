@@ -91,6 +91,10 @@ jobs:
         with:
           python-version: "3.12"
       - uses: ./.github/actions/setup-asio
+      # The Rust cache keeps Player-Core's compiled crate, not the FFmpeg runtime files
+      # its build script stages next to the executables. Rebuild just that package.
+      - name: restage native audio libraries
+        run: cargo clean --locked -p player-core --release
       - name: package
         run: python tools/portable.py --sw
         env:
@@ -132,6 +136,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: release
+      # The Rust cache keeps Player-Core's compiled crate, not the FFmpeg runtime files
+      # its build script stages next to the executables. Rebuild just that package.
+      - name: restage native audio libraries
+        run: cargo clean --locked -p player-core --release
       - name: package
         run: |
           xvfb-run -a python3 tools/portable.py --sw
