@@ -173,14 +173,14 @@ makes them.
 | `views/present.rs` | `init_view`, `present`, `relabel`, `after_layout_phase`, the search box |
 | `views/layout.rs` | the layout's state bindings, the title's line count, `Scale` |
 | `views/input.rs` | events to commands, drags, wheels, keys |
-| `views/transport.rs` | the control bar, the reveal over the artwork, the volume tip |
+| `views/transport.rs` | the control bar (`FrameIn` from `views/present.rs`), the timed reveal over the artwork, the volume tip |
 | `views/now_playing.rs` | artwork slots and crossfade, the words' two blocks, the backdrop effect (its GPU program `views/field.wgsl`, compiled by build.rs) |
 | `views/side_panel/` | `SidePanel`: open/close and page turns (`mod.rs`), the queue's rows, scroll, drag, rails (`queue.rs`), multi-select (`select.rs`: the chosen songs, Shift's range, a sweep), lyric groups, styles, layers (`lyrics.rs`), the info page (`info.rs`) |
 | `views/menus/` | `Menus` on two novaui `Flyout`s: playlist, app, plugin, row, sort, cover, option, output, dropdown lists, the drag target |
 | `views/settings_page.rs` | the settings page: levels, cards, sliders, switches, `SETTINGS` |
 | `views/plugin_view.rs`, `plugin_controls.rs` | one plugin's description for both containers; mounted controls |
 | `views/import_dialog.rs`, `toast.rs` | the import dialog; the toast |
-| `views/desktop_lyrics.rs`, `ui/desktop-lyrics.nui` | desktop lyrics: what the player feeds them each present, and the overlay (its own thread) drawing it |
+| `views/desktop_lyrics.rs`, `ui/desktop-lyrics.nui` | desktop lyrics: the open overlay's `FrameIn` from `views/present.rs`, the feed sent when it changes, and the overlay thread drawing it |
 
 ## 4. Mechanisms and the semantics they carry
 

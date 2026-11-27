@@ -7,7 +7,7 @@
 //! keeps the song's time between feeds itself, and sends its presses back as the player's
 //! commands (`Command`'s text) by the player's waker (`Msg::DesktopLyrics`).
 
-use crate::app::{Models, Msg, Views};
+use crate::app::{Msg, NowPlayingTrack};
 use crate::library::Lyrics;
 use crate::sync::Locked;
 use novaui::dsl::Doc;
@@ -168,24 +168,6 @@ pub struct Feed {
     pub open: bool,
 }
 
-impl PartialEq for Feed {
-    fn eq(&self, o: &Self) -> bool {
-        let same_lyrics = match (&self.lyrics, &o.lyrics) {
-            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
-            (None, None) => true,
-            _ => false,
-        };
-        same_lyrics
-            && self.word_timed == o.word_timed
-            && self.title == o.title
-            && self.artist == o.artist
-            && self.layer == o.layer
-            && self.clock == o.clock
-            && self.look == o.look
-            && self.open == o.open
-    }
-}
-
 /// What the overlay tells the player.
 pub enum FromOverlay {
     /// A press: the command's text (`Command`).
@@ -213,9 +195,8 @@ impl Link {
 pub struct DesktopLyrics {
     link: Option<Link>,
     sent: Feed,
-    /// The lyrics handed over, the track's version they were made from, and whether they are
-    /// stamped word by word.
-    lyrics: (u64, Option<Arc<Lyrics>>, bool),
+    /// Revisions of the track and layer selection in the last feed.
+    versions: (u64, u64),
     to_player: Sender<FromOverlay>,
     pub from_overlay: Receiver<FromOverlay>,
     wake: Waker,
@@ -228,7 +209,7 @@ impl DesktopLyrics {
         DesktopLyrics {
             link: None,
             sent: Feed::default(),
-            lyrics: (u64::MAX, None, false),
+            versions: (0, 0),
             to_player,
             from_overlay,
             wake: ui.waker(Msg::DesktopLyrics),
@@ -247,71 +228,74 @@ pub fn place_text(p: Place) -> String {
     format!("{} {}", p.x, p.y)
 }
 
-/// Every present: the overlay opens or closes as the setting says, and is fed what it shows
-/// when that changed; the face's button is lit while it is up.
-pub fn present(v: &mut Views, ui: &mut Ui, m: &Models) {
-    let want = m.settings.get(SHOWN) == Some("on");
-    let d = &mut *v.desktop_lyrics;
-    let button = v.doc.id("desk");
-    if ui.tree.el(button).lit() != want {
-        ui.tree.set_lit(button, want);
-    }
-    if !want {
+/// Inputs to an open overlay. A closed overlay has no frame input.
+pub(crate) struct FrameIn<'a> {
+    pub track: &'a novaui::Model<Option<NowPlayingTrack>>,
+    pub layers_off: &'a novaui::Model<std::collections::BTreeSet<String>>,
+    pub title: &'a str,
+    pub artist: &'a str,
+    pub clock: SongClock,
+    pub look: Look,
+    pub place: Option<&'a str>,
+}
+
+pub(crate) fn present(d: &mut DesktopLyrics, ui: &mut Ui, button: Id, frame: Option<FrameIn<'_>>) {
+    let Some(f) = frame else {
         if let Some(link) = d.link.take() {
-            link.send(Feed { open: false, ..Feed::default() });
             d.sent = Feed::default();
+            link.send(Feed::default());
+            ui.tree.set_lit(button, false);
         }
         return;
-    }
-    let look = Look::of(|k| m.settings.get(k).map(str::to_owned));
-    if d.link.is_none() {
-        d.link = Some(open(d, &look, kept_place(m.settings.get(PLACE))));
-    }
-    // The lyrics are laid with their layers again only when the face changed.
-    let track = &v.now_playing.track;
-    if d.lyrics.0 != track.version() {
-        let lyrics = track.as_ref().and_then(|f| f.lyrics.clone().map(|l| l.with_layers(&f.layers.layers)));
-        let word_timed = lyrics.as_ref().is_some_and(Lyrics::word_timed);
-        d.lyrics = (track.version(), lyrics.map(Arc::new), word_timed);
-    }
-    let off = &*v.now_playing.layers_off;
-    let carried = d.lyrics.1.as_ref().map(|l| l.layer_ids()).unwrap_or_default();
-    let layer = ["trans", "roma"].into_iter().find(|id| carried.contains(id) && !off.contains(*id)).map(str::to_owned);
-    let words = v.now_playing.words();
-    let feed = Feed {
-        lyrics: d.lyrics.1.clone(),
-        word_timed: d.lyrics.2,
-        title: words.title.clone(),
-        artist: words.artist.clone(),
-        layer,
-        clock: song_clock(m),
-        look: Some(look),
-        open: true,
     };
-    if feed != d.sent {
-        if let Some(link) = &d.link {
-            link.send(feed.clone());
-        }
-        d.sent = feed;
+    let versions = (f.track.version(), f.layers_off.version());
+    if d.link.is_some()
+        && d.versions == versions
+        && d.sent.title == f.title
+        && d.sent.artist == f.artist
+        && d.sent.clock == f.clock
+        && d.sent.look.as_ref() == Some(&f.look)
+    {
+        return;
     }
+    // Place is an opening input only; while the window is up it owns its position.
+    let link = d.link.get_or_insert_with(|| {
+        ui.tree.set_lit(button, true);
+        open(&d.to_player, &d.wake, &f.look, kept_place(f.place))
+    });
+    if !d.sent.open || d.versions.0 != versions.0 {
+        d.sent.lyrics =
+            f.track.as_ref().and_then(|t| t.lyrics.clone().map(|l| Arc::new(l.with_layers(&t.layers.layers))));
+        d.sent.word_timed = d.sent.lyrics.as_ref().is_some_and(|l| l.word_timed());
+    }
+    if !d.sent.open || d.versions != versions {
+        let carried = d.sent.lyrics.as_ref().map(|l| l.layer_ids()).unwrap_or_default();
+        d.sent.layer = ["trans", "roma"]
+            .into_iter()
+            .find(|id| carried.contains(id) && !f.layers_off.contains(*id))
+            .map(str::to_owned);
+    }
+    d.versions = versions;
+    f.title.clone_into(&mut d.sent.title);
+    f.artist.clone_into(&mut d.sent.artist);
+    d.sent.clock = f.clock;
+    d.sent.look = Some(f.look);
+    d.sent.open = true;
+    link.send(d.sent.clone());
 }
 
 /// The song's time as the engine last said (a test's pinned position stands still).
-fn song_clock(m: &Models) -> SongClock {
-    let snap = &m.playback.snap;
+pub(crate) fn song_clock(p: &crate::playback::Playback) -> SongClock {
+    let snap = &p.snap;
     #[cfg(any(test, feature = "test-support"))]
-    if let Some(position) = m.playback.pinned_position.filter(|_| m.playback.opened) {
+    if let Some(position) = p.pinned_position.filter(|_| p.opened) {
         return SongClock { position, at: None, playing: false };
     }
-    SongClock {
-        position: snap.position,
-        at: snap.at,
-        playing: snap.playing && !snap.buffering && m.playback.snap_is_open(),
-    }
+    SongClock { position: snap.position, at: snap.at, playing: snap.playing && !snap.buffering && p.snap_is_open() }
 }
 
 /// Starts the overlay at `place` (or the default), locked as the look says.
-fn open(d: &DesktopLyrics, look: &Look, place: Option<Place>) -> Link {
+fn open(to_player: &Sender<FromOverlay>, wake: &Waker, look: &Look, place: Option<Place>) -> Link {
     let feed = Arc::new(Mutex::new(Feed::default()));
     let waker: Arc<OnceLock<Waker>> = Arc::new(OnceLock::new());
     let opts = OverlayOptions {
@@ -323,8 +307,8 @@ fn open(d: &DesktopLyrics, look: &Look, place: Option<Place>) -> Link {
         click_through: look.locked,
         backend: Default::default(),
     };
-    let (f, w, out, wake) = (feed.clone(), waker.clone(), d.to_player.clone(), d.wake.clone());
-    let (fail, fail_wake) = (d.to_player.clone(), d.wake.clone());
+    let (fail, fail_wake) = (to_player.clone(), wake.clone());
+    let (f, w, out, wake) = (feed.clone(), waker.clone(), to_player.clone(), wake.clone());
     let started = novaui::platform::spawn_overlay(opts, move |ui| {
         let fed = ui.waker(Fed);
         let _ = w.set(fed.clone());

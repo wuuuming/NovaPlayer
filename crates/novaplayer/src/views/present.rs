@@ -95,7 +95,31 @@ impl Player {
             }
             crate::views::import_dialog::present_import(&mut v, ui);
             crate::views::layout::layout_state(&mut v, ui);
-            crate::views::transport::update_transport(&mut v, ui, &m);
+            let snap = &m.playback.snap;
+            let queue = m.playing_queue();
+            let empty = queue.is_empty();
+            let f = crate::views::transport::FrameIn {
+                pos: m.playback.shown_position(),
+                dur: snap.duration.filter(|d| !d.is_zero()),
+                scrub: v.transport.scrub,
+                opening: snap.opening,
+                sweep_at: (snap.waiting() && !empty).then(|| ui.now()),
+                running: snap.playing && !snap.buffering,
+                empty,
+                volume: m.playback.volume,
+                playing: m.playback.opened && m.playback.wants_play,
+                next: queue.next_pos().is_some(),
+                order: queue.order_mode,
+                sortable: m.lists.shown_list.sortable(),
+                words: v.now_playing.track.as_ref().is_some_and(|t| t.lyrics.is_some()),
+                info: v.now_playing.track.is_some(),
+                panel: *v.side_panel.shown,
+                maximized: ui.window.maximized(),
+                locale: ui.strings().version(),
+            };
+            crate::views::transport::update_transport(&mut v, ui, f);
+            let offered = v.side_panel.has_lyrics() || m.lists.shown_list.len() > 1;
+            crate::views::transport::present_way_in(&mut v, ui, offered);
         }
         // The field's shade seats the two-column layout's right column: none in one column, and
         // it fades out under the settings page (one column over the whole field).
@@ -114,7 +138,20 @@ impl Player {
         crate::views::toast::present_toast(&mut v, ui);
         v.side_panel.tick(ui, v.doc);
         crate::views::transport::present_vol_tip(&mut v, ui);
-        crate::views::desktop_lyrics::present(&mut v, ui, &m);
+        use crate::views::desktop_lyrics as desk;
+        let frame = (m.settings.get(desk::SHOWN) == Some("on")).then(|| {
+            let words = v.now_playing.words();
+            desk::FrameIn {
+                track: &v.now_playing.track,
+                layers_off: &v.now_playing.layers_off,
+                title: &words.title,
+                artist: &words.artist,
+                clock: desk::song_clock(m.playback),
+                look: desk::Look::of(|k| m.settings.get(k).map(str::to_owned)),
+                place: m.settings.get(desk::PLACE),
+            }
+        });
+        desk::present(v.desktop_lyrics, ui, v.doc.id("desk"), frame);
         crate::views::menus::drag::drag_tick(self, ui);
     }
 

@@ -1,8 +1,6 @@
 //! The control bar and the volume tip.
 //!
-//! Nothing here keeps a copy of what it last wrote: the tree's setters and `Doc::set` drop a value
-//! equal to the one they hold, so an unchanged transport costs the comparisons they do and marks
-//! nothing. The bar's fills are percent lengths of their bars, so no size is read back.
+//! The bar writes only when its frame input changes. Pointer reveals and clock deadlines run independently.
 use crate::app::*;
 use crate::library;
 use crate::library::queue::Order;
@@ -10,21 +8,53 @@ use crate::views::side_panel::Page;
 use novaui::*;
 use std::time::Duration;
 
-pub(crate) fn update_transport(v: &mut Views, ui: &mut Ui, m: &Models) {
-    let snap = &m.playback.snap;
-    let pos = m.playback.shown_position();
-    let dur = snap.duration.filter(|d| !d.is_zero());
-    let empty = m.playing_queue().is_empty();
-    let loading = snap.waiting() && !empty;
-    let clock_running = snap.playing && !snap.buffering;
-    let shown =
-        v.transport.scrub.unwrap_or_else(|| dur.map_or(0.0, |d| (pos.as_secs_f32() / d.as_secs_f32()).clamp(0.0, 1.0)));
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) struct FrameIn {
+    pub pos: Duration,
+    pub dur: Option<Duration>,
+    pub scrub: Option<f32>,
+    pub opening: bool,
+    pub sweep_at: Option<f64>,
+    pub running: bool,
+    pub empty: bool,
+    pub volume: f32,
+    pub playing: bool,
+    pub next: bool,
+    pub order: Order,
+    pub sortable: bool,
+    pub words: bool,
+    pub info: bool,
+    pub panel: crate::views::side_panel::Shown,
+    pub maximized: bool,
+    pub locale: u64,
+}
+
+pub(crate) fn update_transport(v: &mut Views, ui: &mut Ui, f: FrameIn) {
+    let FrameIn { pos, dur, empty, .. } = f;
+    let loading = f.sweep_at.is_some();
+    // Wake obligations: the sweep moves every refresh, the clock on each second.
+    if loading {
+        v.transport.clock.frame();
+    }
+    if f.running {
+        // The label turns within 50 ms of the second: late enough to share the backdrop's
+        // 10 Hz step most of the time, too early for anyone to see.
+        let into = pos.as_millis() % 1000;
+        let at = ui.now() + (1000 - into) as f64 / 1000.0 + 0.002;
+        v.transport.clock.within(at, at + 0.05);
+    }
+
+    if v.transport.last == Some(f) {
+        return;
+    }
+    v.transport.last = Some(f);
+    let shown = f.scrub.unwrap_or_else(|| dur.map_or(0.0, |d| (pos.as_secs_f32() / d.as_secs_f32()).clamp(0.0, 1.0)));
     let elapsed = dur.map_or(pos, |d| d.mul_f32(shown));
     let active = dur.is_some() && shown > 0.0 && !loading;
     let (elapsed_text, remaining_text) = if empty {
         (String::new(), String::new())
     } else {
-        let rem = if snap.opening {
+        let rem = if f.opening {
             library::clock(Duration::ZERO)
         } else {
             dur.map(|d| format!("-{}", library::clock(d.saturating_sub(elapsed)))).unwrap_or_default()
@@ -36,7 +66,7 @@ pub(crate) fn update_transport(v: &mut Views, ui: &mut Ui, m: &Models) {
 
     // Opening or waiting for audio: the same segment crossing the bar on the ease-in-out cubic.
     let sweep = v.id("track-sweep");
-    if loading {
+    if let Some(now) = f.sweep_at {
         // Placed once, just left of the bar; each frame moves it (a move, not a relayout) across
         // the bar's width, one sweep per period from the period's start (`sweep_*`).
         let (share, period) = (v.doc.num("sweep_share"), f64::from(v.doc.num("sweep_period")));
@@ -45,7 +75,6 @@ pub(crate) fn update_transport(v: &mut Views, ui: &mut Ui, m: &Models) {
             l.width = Len::Pct(share * 100.0);
             l.inset[3] = Len::Pct(-share * 100.0);
         });
-        let now = ui.now();
         let t0 = now - now % period;
         let e = novaui::anim::Tween::new(0.0, 1.0, t0, period, Ease::InOutCubic).at(now);
         let (w, _) = ui.tree.size(v.id("track-bar"));
@@ -69,7 +98,7 @@ pub(crate) fn update_transport(v: &mut Views, ui: &mut Ui, m: &Models) {
     let secs = dur.map_or(0.0, |d| d.as_secs_f64());
     let at = elapsed.as_secs_f64().floor().min(secs);
     ui.tree.set_semantics(v.id("track"), |a| a.range = Some(Range { value: at, min: 0.0, max: secs, step: 5.0 }));
-    let vol = m.playback.volume;
+    let vol = f.volume;
     let pct = f64::from((vol * 100.0).round());
     ui.tree.set_semantics(v.id("gain"), |a| a.range = Some(Range { value: pct, min: 0.0, max: 100.0, step: 5.0 }));
     let gain = v.id("gain-fill");
@@ -89,14 +118,14 @@ pub(crate) fn update_transport(v: &mut Views, ui: &mut Ui, m: &Models) {
 
     label(ui, v.id("vol"), if vol <= 0.0 { "a11y.unmute" } else { "a11y.mute" });
 
-    let playing = m.playback.opened && m.playback.wants_play;
+    let playing = f.playing;
     ui.tree.set_icon(v.id("play"), if playing { Icon::PauseFilled } else { Icon::PlayFilled });
     label(ui, v.id("play"), if playing { "a11y.pause" } else { "a11y.play" });
-    ui.tree.set_disabled(v.id("play"), empty || snap.opening);
+    ui.tree.set_disabled(v.id("play"), empty || f.opening);
     ui.tree.set_disabled(v.id("prev"), empty);
-    ui.tree.set_disabled(v.id("next"), m.playing_queue().next_pos().is_none());
-    ui.tree.set_disabled(v.id("track"), dur.is_none() || snap.opening);
-    let (order, order_off, said) = match m.playing_queue().order_mode {
+    ui.tree.set_disabled(v.id("next"), !f.next);
+    ui.tree.set_disabled(v.id("track"), dur.is_none() || f.opening);
+    let (order, order_off, said) = match f.order {
         Order::RepeatOne => (Icon::ArrowRepeat1Filled, false, "a11y.order.one"),
         Order::RepeatAll => (Icon::ArrowRepeatAllFilled, false, "a11y.order.all"),
         Order::Off => (Icon::ArrowRepeatAllFilled, true, "a11y.order.off"),
@@ -105,30 +134,17 @@ pub(crate) fn update_transport(v: &mut Views, ui: &mut Ui, m: &Models) {
     ui.tree.set_icon(v.id("order"), order);
     label(ui, v.id("order"), said);
     ui.tree.set_off(v.id("order"), order_off);
-    ui.tree.set_disabled(v.id("q-sort"), !m.lists.shown_list.sortable());
-    let words = v.now_playing.track.as_ref().is_some_and(|f| f.lyrics.is_some());
+    ui.tree.set_disabled(v.id("q-sort"), !f.sortable);
+    let words = f.words;
     ui.tree.set_layout(v.id("words"), |l| l.display = if words { Display::Flex } else { Display::None });
-    ui.tree.set_lit(v.id("words"), v.side_panel.shown.page == Page::Lyrics && v.side_panel.shown.open);
-    ui.tree.set_lit(v.id("queue"), v.side_panel.shown.page == Page::Queue && v.side_panel.shown.open);
-    ui.tree.set_lit(v.id("info"), v.side_panel.shown.shows_info());
-    let info = v.now_playing.track.is_some();
+    ui.tree.set_lit(v.id("words"), f.panel.page == Page::Lyrics && f.panel.open);
+    ui.tree.set_lit(v.id("queue"), f.panel.page == Page::Queue && f.panel.open);
+    ui.tree.set_lit(v.id("info"), f.panel.shows_info());
+    let info = f.info;
     ui.tree.set_layout(v.id("info"), |l| l.display = if info { Display::Flex } else { Display::None });
-    let max = ui.window.maximized();
+    let max = f.maximized;
     ui.tree.set_icon(v.id("max"), if max { Icon::CaptionRestore } else { Icon::CaptionMaximize });
     label(ui, v.id("max"), if max { "a11y.restore" } else { "a11y.maximize" });
-
-    // Wake obligations: the sweep moves every refresh, the clock on each second.
-    if loading {
-        v.transport.clock.frame();
-    }
-    if clock_running {
-        // The label turns within 50 ms of the second: late enough to share the backdrop's
-        // 10 Hz step most of the time, too early for anyone to see.
-        let into = pos.as_millis() % 1000;
-        let at = ui.now() + (1000 - into) as f64 / 1000.0 + 0.002;
-        v.transport.clock.within(at, at + 0.05);
-    }
-    present_way_in(v, ui, m);
 }
 
 /// What a screen reader calls a button whose icon says its state: the string `key`.
@@ -138,7 +154,7 @@ fn label(ui: &mut Ui, id: Id, key: &str) {
 }
 
 /// The pointer reveal is time-driven: it follows the pointer and a deadline, not the model.
-fn present_way_in(v: &mut Views, ui: &mut Ui, m: &Models) {
+pub(crate) fn present_way_in(v: &mut Views, ui: &mut Ui, offered: bool) {
     let (cover_id, way) = (v.id("cover"), v.id("way-in"));
     let over = ui.tree.el(cover_id).hovered() || ui.tree.el(way).hovered();
     let linger = f64::from(v.doc.num("way_in_linger"));
@@ -146,7 +162,6 @@ fn present_way_in(v: &mut Views, ui: &mut Ui, m: &Models) {
         v.transport.way_in_until = ui.now() + linger;
     }
     v.transport.last_pointer = ui.pointer();
-    let offered = v.side_panel.has_lyrics() || m.lists.shown_list.len() > 1;
     let want = if offered
         && !v.side_panel.shown.open
         && (ui.tree.el(way).hovered() || (over && ui.now() < v.transport.way_in_until))
@@ -213,6 +228,7 @@ impl Player {
 }
 
 pub struct Transport {
+    last: Option<FrameIn>,
     /// Its frames and deadlines (`novaui::Clock`).
     pub clock: novaui::Clock,
     pub scrub: Option<f32>,
@@ -229,6 +245,7 @@ impl Transport {
     /// Its clock delivers `Msg::Transport`.
     pub fn new(ui: &mut novaui::Ui) -> Self {
         Transport {
+            last: None,
             clock: ui.clock(crate::app::Msg::Transport),
             scrub: Default::default(),
             gain_drag: Default::default(),
