@@ -406,8 +406,8 @@ impl Player {
         if t.resolution.is_some() {
             return;
         }
-        t.resolution = st.resolution;
-        t.container = t.container.take().or(st.container);
+        t.resolution.clone_from(&st.resolution);
+        t.container = t.container.take().or_else(|| st.container.clone());
         t.file_size = t.file_size.or(st.file_size);
         f.res = t.resolution.as_ref().map(|r| r.label()).unwrap_or_default();
         self.words_again();

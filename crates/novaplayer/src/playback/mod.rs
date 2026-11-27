@@ -28,7 +28,7 @@ pub struct Playback {
     pub opened: bool,
     /// Notified when what plays or whether it plays changes (a song opens, `opened`,
     /// `snap.playing`): whoever shows it follows (the plugin controls' context, `Msg::Controls`).
-    /// `snap` itself is taken from the engine every turn; this is its change.
+    /// `snap` is taken from the engine when its published revision changes.
     pub state: novaui::Model<()>,
     /// The listener's word: the open song is to play (it may still be opening).
     pub wants_play: bool,

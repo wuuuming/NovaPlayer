@@ -568,36 +568,37 @@ impl Player {
         self.drain_jobs(ui);
         self.warm_index();
         let (was_ended, was_playing) = (self.playback.snap.ended, self.playback.snap.playing);
-        let fresh = self.playback.engine.snapshot();
-        if fresh.version != self.playback.song_version {
-            // The sound went on into the song handed over to follow: it is the one playing now.
-            let followed = self.playback.handed.iter().find(|(_, n)| n.version == fresh.version).cloned();
-            if let Some((pos, next)) = followed {
-                self.show_followed(ui, pos, next);
+        if let Some(fresh) = self.playback.engine.changed_snapshot() {
+            if fresh.version != self.playback.song_version {
+                // The sound went on into the song handed over to follow: it is the one playing now.
+                let followed = self.playback.handed.iter().find(|(_, n)| n.version == fresh.version).cloned();
+                if let Some((pos, next)) = followed {
+                    self.show_followed(ui, pos, next);
+                }
+            }
+            if fresh.version == self.playback.song_version {
+                // What changed is read off the two snapshots before the old one goes: no copy of it.
+                let stream_landed = self.playback.snap.stream.is_none() && fresh.stream.is_some();
+                let option_moved = self.playback.snap.option != fresh.option;
+                // A snapshot taken before the engine carried out the latest seek still has the old
+                // position: the bar would flash back to it. Keep the asked position until it has.
+                let stale = fresh.seeks < self.playback.seeks_sent;
+                let (pos, at) = (self.playback.snap.position, self.playback.snap.at);
+                self.playback.snap = fresh;
+                if stale {
+                    self.playback.snap.position = pos;
+                    self.playback.snap.at = at;
+                    self.playback.snap.ended = false;
+                }
+                if stream_landed {
+                    self.merge_stream();
+                } else if option_moved {
+                    self.words_again();
+                }
             }
         }
-        if fresh.version == self.playback.song_version {
-            // What changed is read off the two snapshots before the old one goes: no copy of it.
-            let stream_landed = self.playback.snap.stream.is_none() && fresh.stream.is_some();
-            let option_moved = self.playback.snap.option != fresh.option;
-            // A snapshot taken before the engine carried out the latest seek still has the old
-            // position: the bar would flash back to it. Keep the asked position until it has.
-            let stale = fresh.seeks < self.playback.seeks_sent;
-            let (pos, at) = (self.playback.snap.position, self.playback.snap.at);
-            self.playback.snap = fresh;
-            if stale {
-                self.playback.snap.position = pos;
-                self.playback.snap.at = at;
-                self.playback.snap.ended = false;
-            }
-            if self.playback.snap.duration.is_none() {
-                self.playback.snap.duration = self.playback.duration_hint;
-            }
-            if stream_landed {
-                self.merge_stream();
-            } else if option_moved {
-                self.words_again();
-            }
+        if self.playback.snap.version == self.playback.song_version && self.playback.snap.duration.is_none() {
+            self.playback.snap.duration = self.playback.duration_hint;
         }
         // Failure wins over EOF, even if a backend reports both. Advancing first used to
         // overwrite the failed snapshot with the next song's opening state, lose the error,

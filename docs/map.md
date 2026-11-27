@@ -156,7 +156,7 @@ makes them.
 | `library/disk_cache.rs` | `DiskCache`: files kept by a source's key under a budget, grouped (a folder, a plugin), shared blobs by content; the index in memory from one listing |
 | `library/index.rs` | the library index: songs' records (file stamp, words, picture), albums' pictures, pictures by content (thumbnail, face), reading ahead on its own thread |
 | `library/covers.rs` | which picture a song shows (`resolve`: chosen, file, folder), chosen covers, folder listings (images, each file's size and time) |
-| `playback/engine.rs` | `Engine`, `Cmd`, `Snapshot`, `NextSong`, `Recover`; probes |
+| `playback/engine.rs` | `Engine`, `Cmd`, `Snapshot` (the UI copies it only after a writer advances the revision), `NextSong`, `Recover`; probes |
 | `playback/session.rs` | opening songs, the hand-over, the face's arrival and stand-in, transport actions |
 | `playback/output.rs` | `OutputChoice` (`output.txt`), device rows |
 | `playback/gain.rs` | `Gain`, `KeptGain` (`volume.txt`) |

@@ -152,7 +152,7 @@ pub struct Snapshot {
     /// latest seek, and its position is not the one the user asked for.
     pub seeks: u64,
     /// An online song's stream as probed (resolution, container, size), once known.
-    pub stream: Option<MediaTags>,
+    pub stream: Option<Arc<StreamInfo>>,
     /// The value of its plugin's option the song resolved at: (id, name).
     pub option: Option<(String, String)>,
     /// Plays asked for that found no sound device to play on (the song stays held paused where
@@ -229,9 +229,34 @@ impl Snapshot {
     }
 }
 
+/// The online stream facts shown by the info page, without the probe's artwork and lyrics.
+#[derive(Debug)]
+pub struct StreamInfo {
+    pub(super) resolution: Option<crate::player_core::AudioResolution>,
+    pub(super) container: Option<String>,
+    pub(super) file_size: Option<u64>,
+}
+
+#[derive(Default)]
+pub struct Published {
+    snap: Mutex<Snapshot>,
+    revision: std::sync::atomic::AtomicU64,
+}
+
+impl Published {
+    /// Announce a write under the lock. A reader that sees the new revision must acquire the
+    /// same lock before copying, so it cannot consume the revision without its new contents.
+    pub fn write(&self) -> std::sync::MutexGuard<'_, Snapshot> {
+        let guard = self.snap.locked();
+        self.revision.fetch_add(1, std::sync::atomic::Ordering::Release);
+        guard
+    }
+}
+
 pub struct Engine {
     tx: Sender<Cmd>,
-    pub state: Arc<Mutex<Snapshot>>,
+    pub state: Arc<Published>,
+    seen: u64,
     /// Counts the sound devices' changes (one came, went, or the default moved): a device list
     /// shown is stale when it moved.
     pub devices: Arc<std::sync::atomic::AtomicU64>,
@@ -245,7 +270,7 @@ impl Engine {
         effects: crate::player_core::clap::Effects,
     ) -> Self {
         let (tx, rx) = channel();
-        let state = Arc::new(Mutex::new(Snapshot::default()));
+        let state = Arc::new(Published::default());
         let st = state.clone();
         let devices: Arc<std::sync::atomic::AtomicU64> = Default::default();
         {
@@ -269,13 +294,24 @@ impl Engine {
                 move || worker(rx, poke, st, wake, (accounts, effects))
             })
             .expect("engine thread");
-        Engine { tx, state, devices, thread: Some(thread) }
+        Engine { tx, state, seen: 0, devices, thread: Some(thread) }
     }
     pub fn send(&self, c: Cmd) {
         let _ = self.tx.send(c);
     }
+    #[cfg(any(feature = "test-support", all(test, not(windows))))]
     pub fn snapshot(&self) -> Snapshot {
-        self.state.locked().clone()
+        self.state.snap.locked().clone()
+    }
+
+    pub(crate) fn changed_snapshot(&mut self) -> Option<Snapshot> {
+        use std::sync::atomic::Ordering;
+        if self.state.revision.load(Ordering::Acquire) == self.seen {
+            return None;
+        }
+        let snap = self.state.snap.locked();
+        self.seen = self.state.revision.load(Ordering::Relaxed);
+        Some(snap.clone())
     }
 }
 
@@ -363,13 +399,14 @@ fn is_remote(path: &std::path::Path, url: Option<&String>) -> bool {
 
 /// Probes an online song's stream for the info page, once, and publishes it if the song is still
 /// the one at `version`.
-fn probe_stream_for(st: &Arc<Mutex<Snapshot>>, wake: &Arc<dyn Fn() + Send + Sync>, version: u64, url: String) {
+fn probe_stream_for(st: &Arc<Published>, wake: &Arc<dyn Fn() + Send + Sync>, version: u64, url: String) {
     let (st, wake) = (st.clone(), wake.clone());
     std::thread::spawn(move || {
         let Some(t) = probe_stream(&url) else { return };
-        let mut s = st.locked();
+        let mut s = st.write();
         if s.version == version {
-            s.stream = Some(t);
+            s.stream =
+                Some(Arc::new(StreamInfo { resolution: t.resolution, container: t.container, file_size: t.file_size }));
             drop(s);
             wake();
         }
@@ -423,7 +460,7 @@ fn connection_broke(e: &crate::player_core::AudioError, _remote: bool) -> bool {
 /// once, for the info page). A failure says whether it was the sound device's (`Failed::device`).
 #[allow(clippy::too_many_arguments)]
 fn start(
-    st: &Arc<Mutex<Snapshot>>,
+    st: &Arc<Published>,
     wake: &Arc<dyn Fn() + Send + Sync>,
     (accounts, effects): (&crate::plugins::accounts::Accounts, &crate::player_core::clap::Effects),
     player_wake: &Arc<dyn Fn() + Send + Sync>,
@@ -433,7 +470,7 @@ fn start(
     first: bool,
 ) -> Result<(AudioPlayer, bool), Failed> {
     let (factory, url, q) = source_for(accounts, path).map_err(Failed::other)?;
-    st.locked().option = q;
+    st.write().option = q;
     let remote = is_remote(path, url.as_ref());
     if let (Some(url), true) = (url, first) {
         probe_stream_for(st, wake, version, url);
@@ -514,7 +551,7 @@ fn hold(s: &mut Snapshot, at: Duration, held: &mut u64) {
 fn worker(
     rx: Receiver<Cmd>,
     poke: Sender<Cmd>,
-    st: Arc<Mutex<Snapshot>>,
+    st: Arc<Published>,
     wake: Arc<dyn Fn() + Send + Sync>,
     (accounts, effects): (Arc<crate::plugins::accounts::Accounts>, crate::player_core::clap::Effects),
 ) {
@@ -573,7 +610,7 @@ fn worker(
                     let _ = o.player.dispose();
                 }
                 {
-                    let mut s = st.locked();
+                    let mut s = st.write();
                     *s = Snapshot { opening: true, duration, ..Snapshot::fresh(version, seeks, no_device, held) };
                 }
                 wake();
@@ -594,14 +631,14 @@ fn worker(
                 match opened {
                     Ok((player, remote)) => {
                         cur = Some(Open::new(player, path, span, (full, rate, remote)));
-                        let mut s = st.locked();
+                        let mut s = st.write();
                         s.opening = false;
                         s.duration = shown_length(span, full);
                     }
                     Err(e) if e.device => {
                         // No device to play on: held where it was asked to start, opened again
                         // when play is pressed; a play asked for now says there is none.
-                        let mut s = st.locked();
+                        let mut s = st.write();
                         s.duration = shown_length(span, full);
                         hold(&mut s, at, &mut held);
                         if play {
@@ -620,7 +657,7 @@ fn worker(
                             next: None,
                         });
                     }
-                    Err(e) => st.locked().fail(e.text),
+                    Err(e) => st.write().fail(e.text),
                 }
                 changed = true;
                 last_pub = None;
@@ -649,7 +686,7 @@ fn worker(
                     let base = Span::offset(o.span);
                     let at = o.player.position(now).saturating_sub(base);
                     let _ = o.player.dispose();
-                    let mut s = st.locked();
+                    let mut s = st.write();
                     hold(&mut s, at, &mut held);
                     recover = Some(Recover {
                         version: s.version,
@@ -666,7 +703,7 @@ fn worker(
                 } else if let Some(r) = &mut recover {
                     r.play = false;
                     r.next = None;
-                    hold(&mut st.locked(), r.at, &mut held);
+                    hold(&mut st.write(), r.at, &mut held);
                 }
                 changed = true;
                 last_pub = None;
@@ -686,7 +723,7 @@ fn worker(
                         r.next = Some(Instant::now());
                         r.tries = if r.remote { 0 } else { RECOVER_PAUSES_MS.len() - 1 };
                     }
-                    st.locked().loading(true);
+                    st.write().loading(true);
                     changed = true;
                 }
             }
@@ -697,7 +734,7 @@ fn worker(
                 } else if let Some(r) = &mut recover {
                     // Held where it was: not loading, nothing to hear.
                     r.play = false;
-                    st.locked().loading(false);
+                    st.write().loading(false);
                     changed = true;
                 }
             }
@@ -708,7 +745,7 @@ fn worker(
                     let _ = o.player.seek(base + p);
                     // A seek ends the crossfade the song came in under: the going one is not
                     // heard any more.
-                    let mut s = st.locked();
+                    let mut s = st.write();
                     s.ended = false;
                     s.fade_in = Duration::ZERO;
                     drop(s);
@@ -723,11 +760,11 @@ fn worker(
                     }
                 } else if let Some(r) = &mut recover {
                     r.at = p;
-                    let mut s = st.locked();
+                    let mut s = st.write();
                     s.position = p;
                     s.at = Some(Instant::now());
                 }
-                st.locked().seeks = seeks;
+                st.write().seeks = seeks;
                 changed = true;
             }
             Ok(Cmd::Volume(v)) => {
@@ -748,8 +785,8 @@ fn worker(
                 if let Some(mut o) = cur.take() {
                     let _ = o.player.dispose();
                 }
-                let version = st.locked().version;
-                *st.locked() = Snapshot::fresh(version, seeks, no_device, held);
+                let version = st.snap.locked().version;
+                *st.write() = Snapshot::fresh(version, seeks, no_device, held);
                 changed = true;
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
@@ -774,7 +811,7 @@ fn worker(
                         let path = std::mem::take(&mut r.path);
                         cur = Some(Open::new(player, path, r.span, (r.full, r.rate, remote)));
                         recover = None;
-                        let mut s = st.locked();
+                        let mut s = st.write();
                         s.position = at;
                         s.at = Some(Instant::now());
                         s.loading(play);
@@ -782,7 +819,7 @@ fn worker(
                     }
                     Err(e) if e.device => {
                         // No device: held where it was; a play that asked says there is none.
-                        let mut s = st.locked();
+                        let mut s = st.write();
                         hold(&mut s, r.at, &mut held);
                         if std::mem::take(&mut r.play) {
                             count_no_device(&mut s, &mut no_device);
@@ -793,7 +830,7 @@ fn worker(
                         r.tries += 1;
                         if r.tries >= RECOVER_PAUSES_MS.len() {
                             recover = None;
-                            st.locked().fail(e.text);
+                            st.write().fail(e.text);
                         } else {
                             r.next = Some(Instant::now() + Duration::from_millis(RECOVER_PAUSES_MS[r.tries]));
                         }
@@ -840,7 +877,7 @@ fn worker(
                 if let Some(mut failed) = cur.take() {
                     let _ = failed.player.dispose();
                 }
-                let mut s = st.locked();
+                let mut s = st.write();
                 if device && !broke {
                     // The device went and none took it: held paused where it was.
                     let at = s.position_now();
@@ -897,7 +934,7 @@ fn worker(
                     }
                     o.remote = is_remote(&song.path, url.as_ref());
                     (o.path, o.span, o.full, o.rate) = (song.path, song.span, song.duration, None);
-                    let mut s = st.locked();
+                    let mut s = st.write();
                     s.version = song.version;
                     s.duration = shown_length(o.span, o.full);
                     s.option = q;
@@ -915,7 +952,7 @@ fn worker(
             let base = Span::offset(o.span);
             let pos = o.player.position(now).saturating_sub(base);
             let (playing, buffering, ended) = (o.player.is_playing(), o.player.buffering(), o.player.ended());
-            let mut s = st.locked();
+            let mut s = st.write();
             s.position = pos;
             s.at = Some(now);
             s.doing(playing, buffering, ended);
