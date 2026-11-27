@@ -15,7 +15,7 @@ count-allocs = []
 test-support = []
 
 [dependencies]
-novaui = { git = "https://github.com/wuuuming/NovaUI.git", rev = "ab17cd0a6a8d27c3074660397a34ccc56d9979c8" }
+novaui = { git = "https://github.com/wuuuming/NovaUI.git", rev = "1c26b9fcd0c5a9a6ac5e5ec212caf336df2280b8" }
 sha2 = "=0.11.0"
 image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png", "webp", "bmp"] }
 # Deflate for the online-metadata cache (already in the build through png).
@@ -40,11 +40,11 @@ secret-service = { version = "=5.1.0", features = ["rt-async-io-crypto-rust"] }
 # Checks the fonts the build script downloads.
 sha2 = "0.10"
 # The image effects' GPU programs compiled at build time (NovaUI's).
-novaui-shaders = { git = "https://github.com/wuuuming/NovaUI.git", rev = "ab17cd0a6a8d27c3074660397a34ccc56d9979c8" }
+novaui-shaders = { git = "https://github.com/wuuuming/NovaUI.git", rev = "1c26b9fcd0c5a9a6ac5e5ec212caf336df2280b8" }
 
 [dev-dependencies]
 # Headless drivers (screenshots, increment audits) draw through `novaui::backend`.
-novaui = { git = "https://github.com/wuuuming/NovaUI.git", rev = "ab17cd0a6a8d27c3074660397a34ccc56d9979c8", features = ["backend"] }
+novaui = { git = "https://github.com/wuuuming/NovaUI.git", rev = "1c26b9fcd0c5a9a6ac5e5ec212caf336df2280b8", features = ["backend"] }
 # Tests play on player-core's null output (no device).
 player-core = { git = "https://github.com/wuuuming/Player-Core.git", rev = "edc5100a250b028d114d78cc803d92b961334679", features = ["test-support"] }
 

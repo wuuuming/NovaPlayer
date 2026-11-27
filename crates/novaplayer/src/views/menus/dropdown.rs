@@ -33,12 +33,18 @@ pub fn apply(ui: &mut Ui, v: &mut Views, key: &str, value: Option<&str>) {
 /// A typed value (`Typed::value`) is named as it is kept.
 fn name_kept(ui: &mut Ui, doc: &mut Doc, key: &str, value: Option<&str>) {
     let Some(s) = setting(key) else { return };
-    let rows = (s.choices)(ui);
-    let row = rows.iter().find(|c| Some(c.value.as_str()) == value);
-    let typed = || value.filter(|v| s.typed.is_typed(v)).map(str::to_owned);
-    let Some(label) = row.map(|c| c.label.clone()).or_else(typed).or_else(|| rows.first().map(|c| c.label.clone()))
-    else {
-        return;
+    let label = if key == "font" && value.unwrap_or_default().is_empty() {
+        // Naming the default at startup doesn't require enumerating installed fonts.
+        ui.t("font.default", &[])
+    } else {
+        let rows = (s.choices)(ui);
+        let row = rows.iter().find(|c| Some(c.value.as_str()) == value);
+        let typed = || value.filter(|v| s.typed.is_typed(v)).map(str::to_owned);
+        let Some(label) = row.map(|c| c.label.clone()).or_else(typed).or_else(|| rows.first().map(|c| c.label.clone()))
+        else {
+            return;
+        };
+        label
     };
     let id = doc.id(&format!("{key}-drop.value"));
     if ui.text_edit(id).is_some() {
