@@ -1,0 +1,27 @@
+name: Set up the ASIO SDK
+description: Provide the SDK headers and sources for Windows audio builds
+runs:
+  using: composite
+  steps:
+    - shell: python
+      run: |
+        import hashlib
+        import io
+        import os
+        from pathlib import Path
+        from urllib.request import urlopen
+        from zipfile import ZipFile
+
+        url = "https://download.steinberg.net/sdk_downloads/ASIO-SDK_2.3.4_2025-10-15.zip"
+        with urlopen(url, timeout=60) as response:
+            archive = response.read()
+        if hashlib.sha256(archive).hexdigest() != "d5ebf0c20dd2c5f43771fd0c1418f4b361bf52434ee670097cfa6b3a335e2eca":
+            raise SystemExit("ASIO SDK download does not match the pinned archive")
+        dest = Path(os.environ["RUNNER_TEMP"]) / "nova-asio"
+        with ZipFile(io.BytesIO(archive)) as sdk:
+            sdk.extractall(dest)
+        root = dest / "ASIOSDK"
+        if not (root / "host/asiodrivers.h").is_file():
+            raise SystemExit("ASIO SDK is missing host/asiodrivers.h")
+        with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+            print(f"CPAL_ASIO_DIR={root}", file=env)

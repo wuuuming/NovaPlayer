@@ -1528,7 +1528,7 @@ source = "git+https://github.com/wuuuming/NovaUI.git?rev=1cd55ba57084ba8c21d82bf
 
 [[package]]
 name = "novaplayer"
-version = "0.0.14"
+version = "0.0.15"
 dependencies = [
  "image",
  "miniz_oxide 0.8.9",

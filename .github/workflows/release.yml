@@ -90,6 +90,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+      - uses: ./.github/actions/setup-asio
       - name: package
         run: python tools/portable.py --sw
         env:
@@ -171,7 +172,7 @@ jobs:
           cp -r player-core/tools/ffmpeg-audio "$dir/build-scripts"
           cp player-core/crates/player-core/third_party/ffmpeg/LICENSE.txt "$dir/LICENSE.txt"
           {
-            echo "The FFmpeg in NovaPlayer (Windows) is an audio-only LGPL build of FFmpeg $rev."
+            echo "The FFmpeg in NovaPlayer (Windows and Linux) is an audio-only LGPL build of FFmpeg $rev."
             echo "FFmpeg-$rev.tar.gz is FFmpeg's source at that commit; build-scripts/ holds the scripts"
             echo "that build it (make.sh runs build.sh in Docker's ubuntu:22.04)."
           } > "$dir/README.txt"

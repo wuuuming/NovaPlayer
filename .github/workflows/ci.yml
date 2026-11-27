@@ -1,6 +1,6 @@
 # CI: fmt, build, clippy and the unit tests (L0, L2) on GitHub's Windows and Linux runners
-# (`python tools/ci.py`), on a push to `main`, a pull request or by hand. Nothing is set up first:
-# the build scripts fetch what they need (FFmpeg on Windows, the fonts). The L3 scenarios, the
+# (`python tools/ci.py`), on a push to `main`, a pull request or by hand. Windows uses the pinned
+# ASIO SDK rather than asio-sys's PowerShell archive extractor. The L3 scenarios, the
 # screenshots and the perf targets are maintained separately.
 #
 # While NovaUI and Player-Core are private, the secret NOVA_READ_TOKEN (a fine-grained token with
@@ -44,6 +44,8 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/setup-asio
       - uses: Swatinem/rust-cache@v2
       - name: fmt, build, clippy, unit tests
         run: python tools/ci.py
